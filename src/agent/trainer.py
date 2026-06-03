@@ -11,7 +11,7 @@ Responsabilidad única:
 Algoritmo implementado
 -----------------------
     DQN estándar con las siguientes características:
-    - ε-greedy con decaimiento lineal (ε_start → ε_end en N episodios)
+    - eps-greedy con decaimiento lineal (eps_start -> eps_end en N episodios)
     - Experience replay con muestreo aleatorio uniforme
     - Red target sincronizada cada `target_sync_every` episodios
     - Gradient clipping (dentro de DQNAgent.update)
@@ -19,10 +19,10 @@ Algoritmo implementado
 
 Loop por episodio
 -----------------
-    1. env.reset() → obs, info
+    1. env.reset() -> obs, info
     2. while not terminated:
         a. agent.select_action(obs, problem_matrix, mask, epsilon)
-        b. env.step(action) → next_obs, reward, terminated, truncated, info
+        b. env.step(action) -> next_obs, reward, terminated, truncated, info
         c. buffer.push(Transition(...))
         d. if buffer.is_ready: agent.update(buffer.sample(...))
     3. if episodio % target_sync_every == 0: agent.sync_target()
@@ -58,7 +58,7 @@ class DQNTrainer:
     Parameters
     ----------
     env              : TrainingEnv    — entorno de simulación
-    agent            : DQNAgent       — agente con red Q y política ε-greedy
+    agent            : DQNAgent       — agente con red Q y política eps-greedy
     buffer           : ReplayBuffer   — memoria de experiencia
     obs_builder      : ObservationBuilder — para reconstruir inputs del batch
     batch_size       : int            — tamaño del batch de entrenamiento
@@ -118,13 +118,13 @@ class DQNTrainer:
             episode, epsilon, reward, n_solved, n_attempted,
             final_rating, avg_loss, duration_s
         """
-        separator = "─" * 65
+        separator = "-" * 65
         logger.info(separator)
         logger.info(f"  ENTRENAMIENTO DQN")
         logger.info(f"  Episodios      : {n_episodes}")
         logger.info(f"  Batch size     : {self.batch_size}")
         logger.info(f"  Buffer capacity: {self.buffer.capacity}")
-        logger.info(f"  ε: {self.epsilon_start} → {self.epsilon_end} en {self.epsilon_decay_ep} ep.")
+        logger.info(f"  eps: {self.epsilon_start} -> {self.epsilon_end} en {self.epsilon_decay_ep} ep.")
         logger.info(f"  Target sync    : cada {self.target_sync_every} ep.")
         logger.info(separator)
 
@@ -169,7 +169,7 @@ class DQNTrainer:
             if ep % self.log_every == 0 or ep == 1:
                 logger.info(
                     f"  Ep {ep:>4}/{n_episodes} | "
-                    f"ε={epsilon:.3f} | "
+                    f"eps={epsilon:.3f} | "
                     f"reward={ep_reward:>7.1f} | "
                     f"solved={self.env.student.n_solved}/{self.env.student.n_attempted} | "
                     f"rating={self.env.student.rating} | "
@@ -389,7 +389,7 @@ class DQNTrainer:
     # ------------------------------------------------------------------
 
     def _compute_epsilon(self, episode: int) -> float:
-        """Decaimiento lineal de ε desde epsilon_start hasta epsilon_end."""
+        """Decaimiento lineal de eps desde epsilon_start hasta epsilon_end."""
         ratio = min(1.0, (episode - 1) / max(1, self.epsilon_decay_ep - 1))
         return self.epsilon_start + ratio * (self.epsilon_end - self.epsilon_start)
 

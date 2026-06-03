@@ -21,10 +21,10 @@ Selección de acción
     El agente calcula Q(s, a_i) para todos los problemas disponibles,
     aplica la máscara de acciones válidas, y elige:
 
-        - Con probabilidad ε  → acción aleatoria válida  (exploración)
-        - Con probabilidad 1-ε → argmax Q válido          (explotación)
+        - Con probabilidad eps  -> acción aleatoria válida  (exploración)
+        - Con probabilidad 1-eps -> argmax Q válido          (explotación)
 
-    Esto implementa la política ε-greedy estándar de DQN.
+    Esto implementa la política eps-greedy estándar de DQN.
 
 Dos redes: online y target
 --------------------------
@@ -123,7 +123,7 @@ class QNetwork(nn.Module):
 # ---------------------------------------------------------------------------
 
 class DQNAgent:
-    """Agente DQN con política ε-greedy y red target para estabilidad.
+    """Agente DQN con política eps-greedy y red target para estabilidad.
 
     Parameters
     ----------
@@ -177,7 +177,7 @@ class DQNAgent:
         action_mask    : np.ndarray,
         epsilon        : float = 0.0,
     ) -> int:
-        """Selecciona una acción usando la política ε-greedy.
+        """Selecciona una acción usando la política eps-greedy.
 
         Parameters
         ----------
@@ -251,7 +251,7 @@ class DQNAgent:
         """Realiza un paso de gradiente sobre un batch de transiciones.
 
         Implementa la actualización estándar de DQN:
-            target = r + γ · max_{a' válido} Q_target(s', a')  si no termina
+            target = r + gamma · max_{a' válido} Q_target(s', a')  si no termina
             target = r                                           si termina
 
         Parameters

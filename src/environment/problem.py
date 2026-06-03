@@ -189,7 +189,7 @@ class Problem:
         if skipped:
             logger.warning(f"  {skipped} filas omitidas de {len(df)} totales")
 
-        logger.info(f"Problem.from_dataframe → {len(problems)} problemas cargados")
+        logger.info(f"Problem.from_dataframe -> {len(problems)} problemas cargados")
         return problems
 
     # ------------------------------------------------------------------
@@ -227,7 +227,7 @@ class Problem:
         """
         time_remaining = max(0.0, session_budget_min - time_spent_min)
 
-        # ── Parte 1: características numéricas (4 valores) ─────────────
+        # -- Parte 1: características numéricas (4 valores) -------------
 
         rating_norm = (self.rating - _MIN_RATING) / _RATING_RANGE
 
@@ -239,7 +239,7 @@ class Problem:
         time_norm   = min(1.0, solve_time / session_budget_min) \
                       if session_budget_min > 0 else 1.0
 
-        # ── Parte 2: tags one-hot (N_TOPICS valores) ───────────────────
+        # -- Parte 2: tags one-hot (N_TOPICS valores) -------------------
 
         tags_onehot = self._tags_to_onehot()
 

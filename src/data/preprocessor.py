@@ -7,7 +7,7 @@ Responsabilidad:
 
 Pipeline interno
 ----------------
-    1. build_problem_id   — contest (int) + problem_name (letra) → "325A"
+    1. build_problem_id   — contest (int) + problem_name (letra) -> "325A"
     2. extract_rating     — parsea el token "*XXXX" dentro de problem_tags
     3. clean_tags         — elimina "*XXXX", normaliza a lista Python de strings
     4. clean_statement    — elimina whitespace excesivo y artefactos de scraping
@@ -62,7 +62,7 @@ DIFFICULTY_BINS = [
 _RE_RATING_TOKEN  = re.compile(r"\*\d{3,4}")   # "*1500", "*800"
 _RE_WHITESPACE    = re.compile(r"[ \t]+")       # espacios y tabs múltiples
 _RE_BLANK_LINES   = re.compile(r"\n{3,}")       # más de 2 saltos de línea seguidos
-_RE_LATEX_INLINE  = re.compile(r"\$([^$]+)\$")  # $formula$ → formula
+_RE_LATEX_INLINE  = re.compile(r"\$([^$]+)\$")  # $formula$ -> formula
 _RE_META_HEADER   = re.compile(                 # cabecera embebida en erchhh:
     r"^.*?time limit per test.*?standard output",
     re.DOTALL | re.IGNORECASE,
@@ -149,9 +149,9 @@ class Preprocessor:
         """Extrae el rating numérico del campo tags.
 
         Formatos soportados:
-            "implementation,*1500"              → 1500
-            "['dp', 'graphs', '*3000']"         → 3000
-            "greedy,math"  (sin rating)         → pd.NA
+            "implementation,*1500"              -> 1500
+            "['dp', 'graphs', '*3000']"         -> 3000
+            "greedy,math"  (sin rating)         -> pd.NA
         """
         def _parse_rating(raw: str) -> Optional[int]:
             if pd.isna(raw):
@@ -182,8 +182,8 @@ class Preprocessor:
         con la versión limpia en formato string separado por comas.
 
         Ejemplos:
-            "implementation,greedy,*1500" → ["implementation", "greedy"]
-            "['dp', 'graphs', '*3000']"   → ["dp", "graphs"]
+            "implementation,greedy,*1500" -> ["implementation", "greedy"]
+            "['dp', 'graphs', '*3000']"   -> ["dp", "graphs"]
         """
         def _parse_tags(raw: str) -> list[str]:
             if pd.isna(raw):
@@ -228,7 +228,7 @@ class Preprocessor:
 
         Operaciones:
         - Elimina cabecera de metadata embebida (formato erchhh)
-        - Elimina fórmulas LaTeX inline ($...$) → texto plano
+        - Elimina fórmulas LaTeX inline ($...$) -> texto plano
         - Normaliza whitespace
         - Trunca a 2000 caracteres (suficiente para embeddings)
         """
@@ -240,7 +240,7 @@ class Preprocessor:
             # Eliminar cabecera de metadata de erchhh
             text = _RE_META_HEADER.sub("", text)
 
-            # LaTeX inline: $n \leq 100$ → n \leq 100
+            # LaTeX inline: $n \leq 100$ -> n \leq 100
             text = _RE_LATEX_INLINE.sub(r"\1", text)
 
             # Normalizar whitespace
@@ -278,7 +278,7 @@ class Preprocessor:
         df = df[df["statement"].str.len() >= self.min_statement_len]
 
         removed = before - len(df)
-        logger.info(f"  Filtrado: {removed:,} problemas descartados → {len(df):,} válidos")
+        logger.info(f"  Filtrado: {removed:,} problemas descartados -> {len(df):,} válidos")
         return df
 
     # ------------------------------------------------------------------

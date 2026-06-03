@@ -101,15 +101,15 @@ COLUMN_MAPS: dict[str, dict[str, str]] = {
         "problem_name":      "_index",         # letra del problema (ej. "A")
         "problem_statement": "statement",
         "problem_tags":      "tags",           # "implementation,*1500"
-        # name, rating, time_limit_ms, solved_count → pd.NA
+        # name, rating, time_limit_ms, solved_count -> pd.NA
     },
     # kaggle.com/datasets/erchhh/codeforces-problemset
     # Columnas reales: problem_statement, input, output, time_limit, memory_limit, tags
     "erchhh": {
         "problem_statement": "statement",      # tiene metadata embebida al inicio
-        "time_limit":        "time_limit_ms",  # "4 seconds" → preprocessor convierte
+        "time_limit":        "time_limit_ms",  # "4 seconds" -> preprocessor convierte
         "tags":              "tags",            # "['dp', 'graphs', '*3000']"
-        # input, output, memory_limit → se descartan
+        # input, output, memory_limit -> se descartan
     },
     # Fuente genérica: mapeo automático por similitud de nombre
     "generic": {},
@@ -165,7 +165,7 @@ class DatasetLoader:
         logger.info(f"Cargando dataset '{source}' desde: {path}")
 
         raw_df = self._read_file(path)
-        logger.info(f"  → {len(raw_df):,} filas cargadas | columnas: {list(raw_df.columns)}")
+        logger.info(f"  -> {len(raw_df):,} filas cargadas | columnas: {list(raw_df.columns)}")
 
         df = self._apply_column_map(raw_df, source)
         df = self._build_problem_id(df, source)
@@ -176,7 +176,7 @@ class DatasetLoader:
         if self.drop_missing_required:
             df = self._drop_incomplete_rows(df)
 
-        logger.info(f"  → {len(df):,} problemas válidos tras limpieza básica")
+        logger.info(f"  -> {len(df):,} problemas válidos tras limpieza básica")
         return df[CANONICAL_COLUMNS]
 
     # ------------------------------------------------------------------
@@ -209,7 +209,7 @@ class DatasetLoader:
         df_secondary = self.load(secondary_path, source=secondary_source)
 
         merged = self._merge_datasets(df_primary, df_secondary)
-        logger.info(f"  → Merge completo: {len(merged):,} problemas únicos")
+        logger.info(f"  -> Merge completo: {len(merged):,} problemas únicos")
         return merged
 
     # ------------------------------------------------------------------
@@ -220,11 +220,11 @@ class DatasetLoader:
         """Imprime un resumen de columnas y tipos sin aplicar mapeos."""
         path = Path(path)
         raw_df = self._read_file(path)
-        print(f"\n{'─'*55}")
+        print(f"\n{'-'*55}")
         print(f"  Archivo : {path.name}")
         print(f"  Filas   : {len(raw_df):,}")
         print(f"  Columnas: {len(raw_df.columns)}")
-        print(f"{'─'*55}")
+        print(f"{'-'*55}")
         info = pd.DataFrame({
             "dtype": raw_df.dtypes,
             "non_null": raw_df.notna().sum(),
@@ -235,7 +235,7 @@ class DatasetLoader:
             ],
         })
         print(info.to_string())
-        print(f"{'─'*55}\n")
+        print(f"{'-'*55}\n")
 
     # ------------------------------------------------------------------
     # Métodos privados
@@ -291,8 +291,8 @@ class DatasetLoader:
     def _build_problem_id(self, df: pd.DataFrame, source: str) -> pd.DataFrame:
         """Construye problem_id desde columnas auxiliares si no existe.
 
-        immortal3: contest (int) + _index (letra) → "325A"
-        erchhh:    no tiene identificador → usa índice numérico como fallback.
+        immortal3: contest (int) + _index (letra) -> "325A"
+        erchhh:    no tiene identificador -> usa índice numérico como fallback.
         """
         if "problem_id" not in df.columns:
             if "_contest_id" in df.columns and "_index" in df.columns:
@@ -333,7 +333,7 @@ class DatasetLoader:
         # Aquí solo intentamos conversión numérica si ya viene como número.
         if "time_limit_ms" in df.columns:
             numeric = pd.to_numeric(df["time_limit_ms"], errors="coerce")
-            # Si la mayoría son nulos tras la conversión, probablemente es string → dejar crudo
+            # Si la mayoría son nulos tras la conversión, probablemente es string -> dejar crudo
             if numeric.notna().sum() > 0:
                 df["time_limit_ms"] = numeric.astype("Int64")
             # Si son todos nulos (string como "4 seconds"), dejamos el valor crudo

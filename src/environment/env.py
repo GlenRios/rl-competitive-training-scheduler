@@ -99,7 +99,7 @@ class TrainingEnv(gym.Env):
         self.session_budget_min  = session_budget_min
         self.random_seed         = random_seed
 
-        # ── Espacios de Gymnasium ──────────────────────────────────────
+        # -- Espacios de Gymnasium --------------------------------------
         self.action_space = gym.spaces.Discrete(self.n_problems)
 
         self.observation_space = gym.spaces.Box(
@@ -109,7 +109,7 @@ class TrainingEnv(gym.Env):
             dtype = np.float32,
         )
 
-        # ── Módulos de soporte ─────────────────────────────────────────
+        # -- Módulos de soporte -----------------------------------------
         student_kwargs = student_kwargs or {}
         self._student  = StudentModel(
             initial_rating     = initial_rating,
@@ -120,7 +120,7 @@ class TrainingEnv(gym.Env):
         self._obs_builder = ObservationBuilder(problems, session_budget_min)
         self._masker      = ActionMasker(problems)
 
-        # ── Contadores de episodio ─────────────────────────────────────
+        # -- Contadores de episodio -------------------------------------
         self._episode_reward  : float        = 0.0
         self._step_count      : int          = 0
         self._episode_history : list[dict]   = []
@@ -179,7 +179,7 @@ class TrainingEnv(gym.Env):
         truncated  : bool — siempre False (no usamos límite de pasos)
         info       : dict con action_mask, problem_matrix y detalles del intento
         """
-        # ── Validar acción ─────────────────────────────────────────────
+        # -- Validar acción ---------------------------------------------
         mask = self._masker.get_mask(self._student)
         if not (0 <= action < self.n_problems):
             raise ValueError(
@@ -191,7 +191,7 @@ class TrainingEnv(gym.Env):
                 "o tiempo insuficiente."
             )
 
-        # ── Ejecutar intento ───────────────────────────────────────────
+        # -- Ejecutar intento -------------------------------------------
         problem = self.problems[action]
         outcome = self._student.attempt(
             problem_rating = problem.rating,
@@ -199,10 +199,10 @@ class TrainingEnv(gym.Env):
             problem_id     = problem.problem_id,
         )
 
-        # ── Actualizar máscara ─────────────────────────────────────────
+        # -- Actualizar máscara -----------------------------------------
         self._masker.mark_attempted(action)
 
-        # ── Acumuladores ──────────────────────────────────────────────
+        # -- Acumuladores ----------------------------------------------
         self._episode_reward += outcome.reward
         self._step_count     += 1
 
@@ -227,7 +227,7 @@ class TrainingEnv(gym.Env):
             f"time_left={outcome.time_remaining_min:.1f}m"
         )
 
-        # ── Condición de terminación ───────────────────────────────────
+        # -- Condición de terminación -----------------------------------
         terminated = (
             outcome.session_over
             or not self._masker.any_valid(self._student)
@@ -245,7 +245,7 @@ class TrainingEnv(gym.Env):
 
     def render(self) -> None:
         """Imprime el estado actual del episodio en consola."""
-        sep = "─" * 55
+        sep = "-" * 55
         print(sep)
         print(f"  Paso          : {self._step_count}")
         print(f"  Rating        : {self._student.rating}")

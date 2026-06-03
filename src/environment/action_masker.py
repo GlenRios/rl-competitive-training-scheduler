@@ -12,7 +12,7 @@ Un problema es una acción INVÁLIDA si:
 
 La máscara se actualiza tras cada `step()` del entorno.
 El agente DQN la usa para filtrar Q-values antes de seleccionar la acción:
-    q_values[~mask] = -inf  →  el agente nunca elige acciones inválidas.
+    q_values[~mask] = -inf  ->  el agente nunca elige acciones inválidas.
 
 Uso
 ---
@@ -66,8 +66,8 @@ class ActionMasker:
         Returns
         -------
         np.ndarray shape (N_PROBLEMS,), dtype bool
-            True  → acción válida (problema disponible y cabe en tiempo)
-            False → acción inválida
+            True  -> acción válida (problema disponible y cabe en tiempo)
+            False -> acción inválida
         """
         mask = np.ones(self.n_problems, dtype=bool)
 

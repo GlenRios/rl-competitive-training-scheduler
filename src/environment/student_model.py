@@ -5,26 +5,26 @@ Fórmulas implementadas
 ----------------------
 
 Probabilidad de éxito:
-    P_éxito = σ((R_s - d_p) / θ + δ_topics - λ·F)
-    σ(x) = 1 / (1 + e^(-x))
+    P_éxito = sigma((R_s - d_p) / theta + delta_topics - lambda_·F)
+    sigma(x) = 1 / (1 + e^(-x))
 
     R_s      : rating actual del estudiante
     d_p      : dificultad del problema (rating)
-    θ        : parámetro de escala (default 400)
-    δ_topics : bono por afinidad temática ∈ [-0.5, 0.5]
-    λ        : factor de penalización por fatiga (default 0.5)
+    theta        : parámetro de escala (default 400)
+    delta_topics : bono por afinidad temática ∈ [-0.5, 0.5]
+    lambda_        : factor de penalización por fatiga (default 0.5)
     F        : fatiga actual ∈ [0, 1]
 
 Tiempo base de resolución:
     T_base = T_min + (T_max - T_min) · f_dificultad(p, s) · g_temas(p)
     f_dificultad = clip((d_p - R_s + Δ0) / Δ_max, 0, 1)
-    g_temas      = 1 + α · (n_temas - 1)
-    T_intento    = T_base · (1 + ε),   ε ~ U(-0.2, 0.2)
-    T_fracaso    = β · T_intento
+    g_temas      = 1 + alpha · (n_temas - 1)
+    T_intento    = T_base · (1 + eps),   eps ~ U(-0.2, 0.2)
+    T_fracaso    = beta · T_intento
 
 Actualización de rating (ELO simplificado):
-    Si resuelve : ΔR = C · (1 - P_éxito)  → rating sube más si el problema era difícil
-    Si fracasa  : ΔR = 0                   → sin cambio de rating
+    Si resuelve : ΔR = C · (1 - P_éxito)  -> rating sube más si el problema era difícil
+    Si fracasa  : ΔR = 0                   -> sin cambio de rating
 
 Recompensa inmediata:
     Si resuelve : r = r_éxito + ΔR
@@ -195,7 +195,7 @@ class StudentModel:
         self.topics_seen         : set[str]     = set()
 
         # Maestría por tema: cuántas veces ha resuelto problemas de cada tema
-        # Se normaliza al calcular δ_topics
+        # Se normaliza al calcular delta_topics
         self._topic_solves       : dict[str, int] = {t: 0 for t in CANONICAL_TOPICS}
 
     # ------------------------------------------------------------------
@@ -228,7 +228,7 @@ class StudentModel:
                 "La sesión ya terminó. Llama a reset() para iniciar una nueva."
             )
 
-        # 1. Calcular δ_topics (afinidad temática)
+        # 1. Calcular delta_topics (afinidad temática)
         delta_topics = self._topic_affinity(problem_tags)
 
         # 2. Probabilidad de éxito con la fórmula sigmoid
@@ -240,7 +240,7 @@ class StudentModel:
         # 3. Tiempo base de resolución
         t_base = self._solve_time_base(problem_rating, problem_tags)
 
-        # 4. Tiempo real con estocasticidad: T_intento = T_base · (1 + ε)
+        # 4. Tiempo real con estocasticidad: T_intento = T_base · (1 + eps)
         epsilon  = self._rng.uniform(-_EPS, _EPS)
         t_intento = t_base * (1.0 + epsilon)
 
@@ -282,7 +282,7 @@ class StudentModel:
 
         logger.debug(
             f"attempt pid={problem_id!r} | rating={self.rating} | "
-            f"d_p={problem_rating} | δ_topics={delta_topics:.3f} | "
+            f"d_p={problem_rating} | delta_topics={delta_topics:.3f} | "
             f"p_solve={p_solve:.3f} | solved={solved} | "
             f"time={time_min:.1f}m | reward={reward:.1f} | "
             f"Δrating={delta_rating:+d} | fatigue={self.fatigue:.2f}"
@@ -310,7 +310,7 @@ class StudentModel:
         problem_rating : int,
         problem_tags   : list[str],
     ) -> float:
-        """Calcula P_éxito = σ((R_s - d_p) / θ + δ_topics - λ·F).
+        """Calcula P_éxito = sigma((R_s - d_p) / theta + delta_topics - lambda_·F).
 
         Parameters
         ----------
@@ -341,7 +341,7 @@ class StudentModel:
         ----------
         problem_rating : int
         problem_tags   : list[str]
-        include_noise  : bool — si True, incluye ε estocástico
+        include_noise  : bool — si True, incluye eps estocástico
 
         Returns
         -------
@@ -411,23 +411,23 @@ class StudentModel:
 
     @staticmethod
     def _sigmoid(x: float) -> float:
-        """σ(x) = 1 / (1 + e^(-x)), numéricamente estable."""
+        """sigma(x) = 1 / (1 + e^(-x)), numéricamente estable."""
         if x >= 0:
             return 1.0 / (1.0 + math.exp(-x))
         ex = math.exp(x)
         return ex / (1.0 + ex)
 
     def _topic_affinity(self, problem_tags: list[str]) -> float:
-        """Calcula δ_topics ∈ [-0.5, 0.5] — bono por afinidad temática.
+        """Calcula delta_topics ∈ [-0.5, 0.5] — bono por afinidad temática.
 
         Basado en cuántos problemas del mismo tema ha resuelto el estudiante.
-        Si no ha resuelto ningún problema de los temas del problema → δ = 0.0
-        Si domina todos los temas → δ = +0.5
-        Si es novato en todos     → δ oscila cerca de 0.0
+        Si no ha resuelto ningún problema de los temas del problema -> delta = 0.0
+        Si domina todos los temas -> delta = +0.5
+        Si es novato en todos     -> delta oscila cerca de 0.0
 
         Formula:
             maestria_tag = solves_tag / (solves_tag + 3)  ∈ [0, 1)
-            δ_topics = mean(maestria por tags canónicos del problema) - 0.25
+            delta_topics = mean(maestria por tags canónicos del problema) - 0.25
         """
         canonical = [t for t in problem_tags if t in self._topic_solves]
         if not canonical:
@@ -438,7 +438,7 @@ class StudentModel:
             for t in canonical
         ]
         mean_mastery = sum(masteries) / len(masteries)
-        # Centrar en 0: rango [0, 1) → [-0.25, 0.75) pero acotamos a ±0.5
+        # Centrar en 0: rango [0, 1) -> [-0.25, 0.75) pero acotamos a ±0.5
         delta = mean_mastery - 0.25
         return max(-_DELTA_MAX, min(_DELTA_MAX, delta))
 
@@ -446,7 +446,7 @@ class StudentModel:
         """Calcula T_base = T_min + (T_max - T_min) · f_dificultad · g_temas.
 
         f_dificultad = clip((d_p - R_s + Δ0) / Δ_max, 0, 1)
-        g_temas      = 1 + α · (n_temas - 1)
+        g_temas      = 1 + alpha · (n_temas - 1)
         """
         # Factor de dificultad
         f_dif = (problem_rating - self.rating + self.delta0) / self.delta_max_time
@@ -462,7 +462,7 @@ class StudentModel:
     def _update_rating(self, p_solve: float, solved: bool) -> int:
         """Actualiza el rating del estudiante y devuelve el cambio ΔR.
 
-        Si resuelve : ΔR = C · (1 - P_éxito)  → más puntos si era difícil
+        Si resuelve : ΔR = C · (1 - P_éxito)  -> más puntos si era difícil
         Si fracasa  : ΔR = 0
         """
         if solved:
