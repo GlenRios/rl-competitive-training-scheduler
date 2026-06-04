@@ -1,86 +1,81 @@
 """
-student_model.py — Módulo 5: Modelo del estudiante virtual
+student_model.py -- Modulo 5: Modelo del estudiante virtual
 
-Fórmulas implementadas
-----------------------
+Cambios respecto a la version anterior
+----------------------------------------
+- Rating por tema (topic_ratings) en lugar de un unico rating global.
+- R_efectivo para un problema = media de topic_ratings de sus tags.
+- Probabilidad de exito basada en R_efectivo.
+- Ganancia ELO por tema con factor de desafio:
+      delta_R_t = C * (1 - P_t) * challenge_t
+  donde challenge_t = sigma(gap_t / theta), garantizando que
+  problemas faciles para el tema dan ganancias minimas.
+- Rating global derivado del promedio ponderado de topic_ratings.
 
-Probabilidad de éxito:
-    P_éxito = sigma((R_s - d_p) / theta + delta_topics - lambda_·F)
-    sigma(x) = 1 / (1 + e^(-x))
+Formulas implementadas
+-----------------------
 
-    R_s      : rating actual del estudiante
-    d_p      : dificultad del problema (rating)
-    theta        : parámetro de escala (default 400)
-    delta_topics : bono por afinidad temática ∈ [-0.5, 0.5]
-    lambda_        : factor de penalización por fatiga (default 0.5)
-    F        : fatiga actual ∈ [0, 1]
+Rating efectivo:
+    R_ef = mean(topic_ratings[t] for t in tags del problema)
+           Si el problema no tiene tags canonicos -> usa global_rating
 
-Tiempo base de resolución:
-    T_base = T_min + (T_max - T_min) · f_dificultad(p, s) · g_temas(p)
-    f_dificultad = clip((d_p - R_s + Δ0) / Δ_max, 0, 1)
-    g_temas      = 1 + alpha · (n_temas - 1)
-    T_intento    = T_base · (1 + eps),   eps ~ U(-0.2, 0.2)
-    T_fracaso    = beta · T_intento
+Probabilidad de exito:
+    P_exito = sigma((R_ef - d_p) / theta  -  lambda_f * F)
 
-Actualización de rating (ELO simplificado):
-    Si resuelve : ΔR = C · (1 - P_éxito)  -> rating sube más si el problema era difícil
-    Si fracasa  : ΔR = 0                   -> sin cambio de rating
+Tiempo base:
+    f_dif   = clip((d_p - R_ef + delta0) / delta_max, 0, 1)
+    g_temas = 1 + alpha * (n_temas - 1)
+    T_base  = T_min + (T_max - T_min) * f_dif * g_temas
+    T_real  = T_base * (1 + eps),  eps ~ U(-0.2, 0.2)
+    T_fail  = beta * T_real
 
-Recompensa inmediata:
-    Si resuelve : r = r_éxito + ΔR
-    Si fracasa  : r = r_fracaso
+Actualizacion ELO por tema (solo si resuelve):
+    Para cada tag t en tags del problema:
+        gap_t       = d_p - topic_ratings[t]
+        P_t         = sigma((topic_ratings[t] - d_p) / theta)
+        challenge_t = sigma(gap_t / theta)
+        delta_R_t   = C * (1 - P_t) * challenge_t
+        topic_ratings[t] += delta_R_t
 
-Uso
----
-    from src.environment.student_model import StudentModel
+Rating global:
+    peso[t] = intentos_con_tema[t] + 1
+    global_rating = sum(topic_ratings[t] * peso[t]) / sum(pesos)
 
-    student = StudentModel(initial_rating=1500, session_budget_min=120)
-    outcome = student.attempt(problem_rating=1600, problem_tags=["dp", "graphs"])
-
-    print(outcome.solved)    # True / False
-    print(outcome.reward)    # recompensa inmediata
-    print(outcome.p_solve)   # probabilidad calculada
+Recompensa:
+    Si resuelve: r = r_exito + mean(delta_R_t para t en tags)
+    Si fracasa:  r = r_fracaso
 """
 
 import logging
 import math
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
+
+from src.environment.problem import CANONICAL_TOPICS, N_TOPICS
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Parámetros por defecto del modelo (todos configurables en __init__)
+# Parametros por defecto
 # ---------------------------------------------------------------------------
 
-# Probabilidad
-_THETA          = 400.0   # escala de sensibilidad al gap de rating
-_LAMBDA_FATIGUE = 0.5     # penalización por fatiga
-_DELTA_MAX      = 0.5     # bono máximo/mínimo de afinidad temática
+_THETA          = 400.0
+_LAMBDA_FATIGUE = 0.5
+_T_MIN          = 5.0
+_T_MAX          = 60.0
+_DELTA0         = 200.0
+_DELTA_MAX_TIME = 800.0
+_ALPHA          = 0.2
+_BETA           = 0.5
+_EPS            = 0.2
+_C_ELO          = 10.0
+_R_EXITO        = 10.0
+_R_FRACASO      = -2.0
 
-# Tiempo
-_T_MIN  = 5.0             # minutos mínimos de resolución
-_T_MAX  = 60.0            # minutos máximos de resolución
-_DELTA0 = 200.0           # desplazamiento del factor de dificultad
-_DELTA_MAX_TIME = 800.0   # rango de referencia para f_dificultad
-_ALPHA  = 0.2             # coeficiente de complejidad temática
-_BETA   = 0.5             # fracción de tiempo consumida al fracasar
-_EPS    = 0.2             # amplitud de estocasticidad en tiempo ± 20%
-
-# Rating ELO
-_C_ELO  = 10              # cambio máximo de rating por problema resuelto
-
-# Recompensa
-_R_EXITO   =  10.0        # recompensa fija por resolver
-_R_FRACASO =  -2.0        # penalización fija por fallar
-
-# Límites de rating válidos en Codeforces
-_MIN_RATING = 800
-_MAX_RATING = 3500
-
-# Temas canónicos (alineados con Problem.CANONICAL_TOPICS)
-from src.environment.problem import CANONICAL_TOPICS, N_TOPICS
+_MIN_RATING     = 800
+_MAX_RATING     = 3500
+_DEFAULT_TOPIC_RATING = 1200
 
 
 # ---------------------------------------------------------------------------
@@ -93,22 +88,22 @@ class AttemptOutcome:
 
     Attributes
     ----------
-    solved             : bool   — True si el estudiante lo resolvió
-    time_min           : float  — minutos consumidos en el intento
-    p_solve            : float  — probabilidad calculada antes del intento
-    reward             : float  — recompensa inmediata (r_éxito+ΔR o r_fracaso)
-    delta_rating       : int    — cambio de rating producido
-    new_rating         : int    — rating del estudiante tras el intento
-    fatigue            : float  — fatiga tras el intento [0, 1]
-    time_remaining_min : float  — minutos restantes en la sesión
-    session_over       : bool   — True si la sesión terminó tras el intento
+    solved              : bool
+    time_min            : float
+    p_solve             : float   -- probabilidad calculada antes del intento
+    reward              : float   -- recompensa inmediata
+    topic_deltas        : dict    -- {tag: delta_rating} para tags del problema
+    new_global_rating   : float   -- rating global tras el intento
+    fatigue             : float
+    time_remaining_min  : float
+    session_over        : bool
     """
     solved             : bool
     time_min           : float
     p_solve            : float
     reward             : float
-    delta_rating       : int
-    new_rating         : int
+    topic_deltas       : dict[str, float]
+    new_global_rating  : float
     fatigue            : float
     time_remaining_min : float
     session_over       : bool
@@ -119,190 +114,187 @@ class AttemptOutcome:
 # ---------------------------------------------------------------------------
 
 class StudentModel:
-    """Simula el comportamiento de un estudiante en una sesión de entrenamiento.
+    """Simula un estudiante con ELO independiente por tema.
 
     Parameters
     ----------
-    initial_rating      : int    — rating inicial (800–3500)
-    session_budget_min  : float  — duración máxima de la sesión en minutos
-    random_seed         : int | None — semilla para reproducibilidad
-    theta               : float  — escala de sensibilidad al gap (default 400)
-    lambda_fatigue      : float  — factor de penalización por fatiga (default 0.5)
-    fatigue_per_problem : float  — incremento de fatiga por intento (default 0.08)
-    t_min               : float  — tiempo mínimo de resolución en minutos
-    t_max               : float  — tiempo máximo de resolución en minutos
-    delta0              : float  — desplazamiento en f_dificultad
-    delta_max_time      : float  — rango de referencia en f_dificultad
-    alpha               : float  — coeficiente de complejidad temática
-    beta                : float  — fracción de tiempo consumida al fracasar
-    c_elo               : int    — cambio máximo de rating por problema resuelto
-    r_exito             : float  — recompensa fija por resolver
-    r_fracaso           : float  — penalización fija por fallar
+    topic_ratings       : dict[str, float] | None
+        Rating inicial por tema canonico. Si None, todos empiezan en
+        default_topic_rating.
+    global_rating       : float | None
+        Rating global inicial. Si None se calcula desde topic_ratings.
+        Solo se usa como fallback cuando el problema no tiene tags canonicos.
+    session_budget_min  : float
+    random_seed         : int | None
+    default_topic_rating: float
+        Rating inicial para temas sin valor explicito (default 1200).
+    theta               : float
+    lambda_fatigue      : float
+    fatigue_per_problem : float
+    t_min, t_max        : float
+    delta0, delta_max_time : float
+    alpha, beta         : float
+    c_elo               : float
+    r_exito, r_fracaso  : float
     """
 
     def __init__(
         self,
-        initial_rating      : int   = 1500,
-        session_budget_min  : float = 120.0,
-        random_seed         : Optional[int] = None,
-        theta               : float = _THETA,
-        lambda_fatigue      : float = _LAMBDA_FATIGUE,
-        fatigue_per_problem : float = 0.08,
-        t_min               : float = _T_MIN,
-        t_max               : float = _T_MAX,
-        delta0              : float = _DELTA0,
-        delta_max_time      : float = _DELTA_MAX_TIME,
-        alpha               : float = _ALPHA,
-        beta                : float = _BETA,
-        c_elo               : int   = _C_ELO,
-        r_exito             : float = _R_EXITO,
-        r_fracaso           : float = _R_FRACASO,
+        topic_ratings        : Optional[dict[str, float]] = None,
+        global_rating        : Optional[float]            = None,
+        session_budget_min   : float  = 120.0,
+        random_seed          : Optional[int] = None,
+        default_topic_rating : float  = _DEFAULT_TOPIC_RATING,
+        theta                : float  = _THETA,
+        lambda_fatigue       : float  = _LAMBDA_FATIGUE,
+        fatigue_per_problem  : float  = 0.08,
+        t_min                : float  = _T_MIN,
+        t_max                : float  = _T_MAX,
+        delta0               : float  = _DELTA0,
+        delta_max_time       : float  = _DELTA_MAX_TIME,
+        alpha                : float  = _ALPHA,
+        beta                 : float  = _BETA,
+        c_elo                : float  = _C_ELO,
+        r_exito              : float  = _R_EXITO,
+        r_fracaso            : float  = _R_FRACASO,
     ) -> None:
-        if not (_MIN_RATING <= initial_rating <= _MAX_RATING):
-            raise ValueError(
-                f"initial_rating debe estar entre {_MIN_RATING} y {_MAX_RATING}. "
-                f"Recibido: {initial_rating}"
-            )
         if session_budget_min <= 0:
             raise ValueError("session_budget_min debe ser positivo.")
 
-        # Perfil fijo del estudiante
-        self.initial_rating     = initial_rating
-        self.session_budget_min = session_budget_min
+        self.session_budget_min   = session_budget_min
+        self.default_topic_rating = default_topic_rating
+        self.theta                = theta
+        self.lambda_fatigue       = lambda_fatigue
+        self.fatigue_per_problem  = fatigue_per_problem
+        self.t_min                = t_min
+        self.t_max                = t_max
+        self.delta0               = delta0
+        self.delta_max_time       = delta_max_time
+        self.alpha                = alpha
+        self.beta                 = beta
+        self.c_elo                = c_elo
+        self.r_exito              = r_exito
+        self.r_fracaso            = r_fracaso
+        self._rng                 = random.Random(random_seed)
 
-        # Hiperparámetros del modelo
-        self.theta               = theta
-        self.lambda_fatigue      = lambda_fatigue
-        self.fatigue_per_problem = fatigue_per_problem
-        self.t_min               = t_min
-        self.t_max               = t_max
-        self.delta0              = delta0
-        self.delta_max_time      = delta_max_time
-        self.alpha               = alpha
-        self.beta                = beta
-        self.c_elo               = c_elo
-        self.r_exito             = r_exito
-        self.r_fracaso           = r_fracaso
+        # Inicializar topic_ratings
+        self._initial_topic_ratings: dict[str, float] = {}
+        for topic in CANONICAL_TOPICS:
+            if topic_ratings and topic in topic_ratings:
+                val = float(topic_ratings[topic])
+            else:
+                val = default_topic_rating
+            val = max(_MIN_RATING, min(_MAX_RATING, val))
+            self._initial_topic_ratings[topic] = val
 
-        self._rng = random.Random(random_seed)
+        # Calcular global_rating inicial
+        if global_rating is not None:
+            self._initial_global_rating = float(global_rating)
+        else:
+            self._initial_global_rating = float(
+                sum(self._initial_topic_ratings.values()) / N_TOPICS
+            )
 
-        # Estado de sesión
-        self.rating              : int          = initial_rating
-        self.fatigue             : float        = 0.0
-        self.time_spent_min      : float        = 0.0
-        self.problems_solved     : list[str]    = []
-        self.problems_attempted  : list[str]    = []
-        self.topics_seen         : set[str]     = set()
+        # Estado de sesion (se resetea en reset())
+        self.topic_ratings       : dict[str, float] = {}
+        self.global_rating       : float             = 0.0
+        self.fatigue             : float             = 0.0
+        self.time_spent_min      : float             = 0.0
+        self.problems_solved     : list[str]         = []
+        self.problems_attempted  : list[str]         = []
+        self.topics_seen         : set[str]          = set()
+        self._topic_attempts     : dict[str, int]    = {}
 
-        # Maestría por tema: cuántas veces ha resuelto problemas de cada tema
-        # Se normaliza al calcular delta_topics
-        self._topic_solves       : dict[str, int] = {t: 0 for t in CANONICAL_TOPICS}
+        self.reset()
 
     # ------------------------------------------------------------------
-    # API pública principal
+    # API publica principal
     # ------------------------------------------------------------------
 
     def attempt(
         self,
-        problem_rating  : int,
-        problem_tags    : list[str],
-        problem_id      : str = "",
+        problem_rating : int,
+        problem_tags   : list[str],
+        problem_id     : str = "",
     ) -> AttemptOutcome:
-        """Simula el intento del estudiante en un problema.
-
-        Parameters
-        ----------
-        problem_rating : int
-            Rating del problema (dificultad d_p).
-        problem_tags : list[str]
-            Lista de temas del problema.
-        problem_id : str
-            Identificador opcional para registro.
-
-        Returns
-        -------
-        AttemptOutcome con todos los resultados del intento.
-        """
+        """Simula el intento del estudiante en un problema."""
         if self.session_over:
             raise RuntimeError(
-                "La sesión ya terminó. Llama a reset() para iniciar una nueva."
+                "La sesion ya termino. Llama a reset() para iniciar una nueva."
             )
 
-        # 1. Calcular delta_topics (afinidad temática)
-        delta_topics = self._topic_affinity(problem_tags)
+        # 1. Rating efectivo para este problema
+        r_ef = self._effective_rating(problem_tags)
 
-        # 2. Probabilidad de éxito con la fórmula sigmoid
-        p_solve = self.probability_of_solving(
-            problem_rating=problem_rating,
-            problem_tags=problem_tags,
-        )
+        # 2. Probabilidad de exito
+        p_solve = self.probability_of_solving(problem_rating, problem_tags)
 
-        # 3. Tiempo base de resolución
-        t_base = self._solve_time_base(problem_rating, problem_tags)
-
-        # 4. Tiempo real con estocasticidad: T_intento = T_base · (1 + eps)
-        epsilon  = self._rng.uniform(-_EPS, _EPS)
+        # 3. Tiempo base
+        t_base    = self._solve_time_base(problem_rating, r_ef, problem_tags)
+        epsilon   = self._rng.uniform(-_EPS, _EPS)
         t_intento = t_base * (1.0 + epsilon)
 
-        # 5. Resultado estocástico
-        solved = self._rng.random() <= p_solve
-
-        # 6. Tiempo consumido
+        # 4. Resultado estocastico
+        solved   = self._rng.random() <= p_solve
         time_min = t_intento if solved else self.beta * t_intento
         time_min = round(max(1.0, time_min), 1)
 
-        # 7. Actualizar rating y calcular recompensa
-        delta_rating = self._update_rating(p_solve, solved)
-        reward       = (self.r_exito + delta_rating) if solved else self.r_fracaso
+        # 5. Actualizar ELO por tema y calcular recompensa
+        topic_deltas: dict[str, float] = {}
+        if solved:
+            topic_deltas = self._update_topic_ratings(problem_rating, problem_tags)
+            self._update_global_rating()
+            mean_delta   = sum(topic_deltas.values()) / max(1, len(topic_deltas))
+            reward       = self.r_exito + mean_delta
+        else:
+            reward = self.r_fracaso
 
-        # 8. Actualizar estado de sesión
+        # 6. Actualizar estado de sesion
         self.time_spent_min += time_min
         self.fatigue         = min(1.0, self.fatigue + self.fatigue_per_problem)
         self.topics_seen.update(problem_tags)
+
+        for tag in problem_tags:
+            if tag in self._topic_attempts:
+                self._topic_attempts[tag] += 1
 
         if problem_id:
             self.problems_attempted.append(problem_id)
             if solved:
                 self.problems_solved.append(problem_id)
-                for tag in problem_tags:
-                    if tag in self._topic_solves:
-                        self._topic_solves[tag] += 1
 
-        outcome = AttemptOutcome(
+        logger.debug(
+            f"attempt pid={problem_id!r} | r_ef={r_ef:.0f} | "
+            f"d_p={problem_rating} | p={p_solve:.3f} | "
+            f"solved={solved} | time={time_min:.1f}m | "
+            f"reward={reward:.1f} | global={self.global_rating:.0f}"
+        )
+
+        return AttemptOutcome(
             solved             = solved,
             time_min           = time_min,
             p_solve            = round(p_solve, 4),
             reward             = round(reward, 2),
-            delta_rating       = delta_rating,
-            new_rating         = self.rating,
+            topic_deltas       = topic_deltas,
+            new_global_rating  = round(self.global_rating, 1),
             fatigue            = round(self.fatigue, 4),
             time_remaining_min = round(self.time_remaining_min, 1),
             session_over       = self.session_over,
         )
 
-        logger.debug(
-            f"attempt pid={problem_id!r} | rating={self.rating} | "
-            f"d_p={problem_rating} | delta_topics={delta_topics:.3f} | "
-            f"p_solve={p_solve:.3f} | solved={solved} | "
-            f"time={time_min:.1f}m | reward={reward:.1f} | "
-            f"Δrating={delta_rating:+d} | fatigue={self.fatigue:.2f}"
-        )
-
-        return outcome
-
     def reset(self) -> None:
-        """Reinicia el estado para una nueva sesión (nuevo episodio DQN)."""
-        self.rating              = self.initial_rating
-        self.fatigue             = 0.0
-        self.time_spent_min      = 0.0
-        self.problems_solved     = []
-        self.problems_attempted  = []
-        self.topics_seen         = set()
-        self._topic_solves       = {t: 0 for t in CANONICAL_TOPICS}
-        logger.debug(f"StudentModel reseteado — rating={self.rating}")
+        """Reinicia el estado para un nuevo episodio."""
+        self.topic_ratings      = dict(self._initial_topic_ratings)
+        self.global_rating      = self._initial_global_rating
+        self.fatigue            = 0.0
+        self.time_spent_min     = 0.0
+        self.problems_solved    = []
+        self.problems_attempted = []
+        self.topics_seen        = set()
+        self._topic_attempts    = {t: 0 for t in CANONICAL_TOPICS}
 
     # ------------------------------------------------------------------
-    # Fórmulas públicas (sin efecto de estado — solo consulta)
+    # Formulas publicas (sin efecto de estado)
     # ------------------------------------------------------------------
 
     def probability_of_solving(
@@ -310,58 +302,34 @@ class StudentModel:
         problem_rating : int,
         problem_tags   : list[str],
     ) -> float:
-        """Calcula P_éxito = sigma((R_s - d_p) / theta + delta_topics - lambda_·F).
-
-        Parameters
-        ----------
-        problem_rating : int   — dificultad del problema d_p
-        problem_tags   : list  — temas del problema
-
-        Returns
-        -------
-        float en (0, 1)
-        """
-        delta_topics = self._topic_affinity(problem_tags)
-        x = (
-            (self.rating - problem_rating) / self.theta
-            + delta_topics
-            - self.lambda_fatigue * self.fatigue
-        )
-        return self._sigmoid(x)
+        """P_exito = sigma((R_ef - d_p) / theta  -  lambda_f * F)"""
+        r_ef = self._effective_rating(problem_tags)
+        x    = (r_ef - problem_rating) / self.theta - self.lambda_fatigue * self.fatigue
+        return round(self._sigmoid(x), 4)
 
     def estimate_solve_time(
         self,
-        problem_rating  : int,
-        problem_tags    : list[str],
-        include_noise   : bool = False,
+        problem_rating : int,
+        problem_tags   : list[str],
     ) -> float:
-        """Estima el tiempo de resolución sin modificar el estado.
-
-        Parameters
-        ----------
-        problem_rating : int
-        problem_tags   : list[str]
-        include_noise  : bool — si True, incluye eps estocástico
-
-        Returns
-        -------
-        float — minutos estimados si el estudiante resuelve el problema.
-        """
-        t_base = self._solve_time_base(problem_rating, problem_tags)
-        if include_noise:
-            eps    = self._rng.uniform(-_EPS, _EPS)
-            t_base = t_base * (1.0 + eps)
+        """Tiempo estimado de resolucion en minutos (sin modificar estado)."""
+        r_ef   = self._effective_rating(problem_tags)
+        t_base = self._solve_time_base(problem_rating, r_ef, problem_tags)
         return round(t_base, 1)
 
     def will_fit_in_session(
         self, problem_rating: int, problem_tags: list[str]
     ) -> bool:
-        """True si el tiempo estimado cabe en el tiempo restante."""
         return self.estimate_solve_time(problem_rating, problem_tags) <= self.time_remaining_min
 
     # ------------------------------------------------------------------
     # Propiedades de estado
     # ------------------------------------------------------------------
+
+    @property
+    def rating(self) -> float:
+        """Alias de global_rating para compatibilidad con Problem y ObservationBuilder."""
+        return self.global_rating
 
     @property
     def time_remaining_min(self) -> float:
@@ -381,101 +349,113 @@ class StudentModel:
 
     @property
     def solve_rate(self) -> float:
-        if self.n_attempted == 0:
-            return 0.0
-        return self.n_solved / self.n_attempted
+        return self.n_solved / self.n_attempted if self.n_attempted else 0.0
 
     @property
     def state_vector(self) -> list[float]:
-        """Vector numérico del estado actual del estudiante para el agente DQN.
+        """Vector de estado para el agente DQN.
 
         Returns
         -------
-        list[float] de 5 componentes, todos en [0, 1]:
-            [rating_norm, fatigue, time_used_norm, solve_rate, n_topics_norm]
+        list[float] de longitud 4 + N_TOPICS = 24:
+            [global_rating_norm, fatigue, time_used_norm, solve_rate,
+             topic_rating_norm_0, ..., topic_rating_norm_19]
         """
-        rating_norm    = (self.rating - _MIN_RATING) / (_MAX_RATING - _MIN_RATING)
+        r_range        = _MAX_RATING - _MIN_RATING
+        global_norm    = (self.global_rating - _MIN_RATING) / r_range
         time_used_norm = self.time_spent_min / self.session_budget_min
-        n_topics_norm  = min(1.0, len(self.topics_seen) / 20.0)
+
+        topic_norms = [
+            (self.topic_ratings[t] - _MIN_RATING) / r_range
+            for t in CANONICAL_TOPICS
+        ]
+
         return [
-            round(rating_norm,    4),
+            round(global_norm,    4),
             round(self.fatigue,   4),
             round(time_used_norm, 4),
             round(self.solve_rate, 4),
-            round(n_topics_norm,  4),
-        ]
+        ] + [round(v, 4) for v in topic_norms]
 
     # ------------------------------------------------------------------
-    # Métodos privados — fórmulas internas
+    # Metodos privados
     # ------------------------------------------------------------------
+
+    def _effective_rating(self, problem_tags: list[str]) -> float:
+        """R_ef = media de topic_ratings para los tags canonicos del problema."""
+        canonical = [t for t in problem_tags if t in self.topic_ratings]
+        if not canonical:
+            return self.global_rating
+        return sum(self.topic_ratings[t] for t in canonical) / len(canonical)
+
+    def _update_topic_ratings(
+        self, problem_rating: int, problem_tags: list[str]
+    ) -> dict[str, float]:
+        """Actualiza ELO por tema con factor de desafio.
+
+        Para cada tag t canonico del problema:
+            gap_t       = d_p - topic_ratings[t]
+            P_t         = sigma((topic_ratings[t] - d_p) / theta)
+            challenge_t = sigma(gap_t / theta)
+            delta_R_t   = C * (1 - P_t) * challenge_t
+            topic_ratings[t] += delta_R_t
+
+        Returns
+        -------
+        dict[str, float] -- {tag: delta aplicado}
+        """
+        deltas: dict[str, float] = {}
+        for tag in problem_tags:
+            if tag not in self.topic_ratings:
+                continue
+            r_t         = self.topic_ratings[tag]
+            gap_t       = problem_rating - r_t
+            p_t         = self._sigmoid((r_t - problem_rating) / self.theta)
+            challenge_t = self._sigmoid(gap_t / self.theta)
+            delta       = self.c_elo * (1.0 - p_t) * challenge_t
+            delta       = round(delta, 3)
+
+            new_val     = max(_MIN_RATING, min(_MAX_RATING, r_t + delta))
+            self.topic_ratings[tag] = new_val
+            deltas[tag] = delta
+
+        return deltas
+
+    def _update_global_rating(self) -> None:
+        """global_rating = promedio ponderado por intentos por tema."""
+        total_weight = 0.0
+        weighted_sum = 0.0
+        for t in CANONICAL_TOPICS:
+            w             = self._topic_attempts.get(t, 0) + 1
+            weighted_sum += self.topic_ratings[t] * w
+            total_weight += w
+        self.global_rating = weighted_sum / total_weight
+
+    def _solve_time_base(
+        self, problem_rating: int, r_ef: float, problem_tags: list[str]
+    ) -> float:
+        """T_base = T_min + (T_max - T_min) * f_dif * g_temas"""
+        f_dif   = (problem_rating - r_ef + self.delta0) / self.delta_max_time
+        f_dif   = max(0.0, min(1.0, f_dif))
+        n_temas = max(1, len(problem_tags))
+        g_temas = 1.0 + self.alpha * (n_temas - 1)
+        return self.t_min + (self.t_max - self.t_min) * f_dif * g_temas
 
     @staticmethod
     def _sigmoid(x: float) -> float:
-        """sigma(x) = 1 / (1 + e^(-x)), numéricamente estable."""
         if x >= 0:
             return 1.0 / (1.0 + math.exp(-x))
         ex = math.exp(x)
         return ex / (1.0 + ex)
 
-    def _topic_affinity(self, problem_tags: list[str]) -> float:
-        """Calcula delta_topics ∈ [-0.5, 0.5] — bono por afinidad temática.
-
-        Basado en cuántos problemas del mismo tema ha resuelto el estudiante.
-        Si no ha resuelto ningún problema de los temas del problema -> delta = 0.0
-        Si domina todos los temas -> delta = +0.5
-        Si es novato en todos     -> delta oscila cerca de 0.0
-
-        Formula:
-            maestria_tag = solves_tag / (solves_tag + 3)  ∈ [0, 1)
-            delta_topics = mean(maestria por tags canónicos del problema) - 0.25
-        """
-        canonical = [t for t in problem_tags if t in self._topic_solves]
-        if not canonical:
-            return 0.0
-
-        masteries = [
-            self._topic_solves[t] / (self._topic_solves[t] + 3)
-            for t in canonical
-        ]
-        mean_mastery = sum(masteries) / len(masteries)
-        # Centrar en 0: rango [0, 1) -> [-0.25, 0.75) pero acotamos a ±0.5
-        delta = mean_mastery - 0.25
-        return max(-_DELTA_MAX, min(_DELTA_MAX, delta))
-
-    def _solve_time_base(self, problem_rating: int, problem_tags: list[str]) -> float:
-        """Calcula T_base = T_min + (T_max - T_min) · f_dificultad · g_temas.
-
-        f_dificultad = clip((d_p - R_s + Δ0) / Δ_max, 0, 1)
-        g_temas      = 1 + alpha · (n_temas - 1)
-        """
-        # Factor de dificultad
-        f_dif = (problem_rating - self.rating + self.delta0) / self.delta_max_time
-        f_dif = max(0.0, min(1.0, f_dif))
-
-        # Factor de complejidad temática
-        n_temas = max(1, len(problem_tags))
-        g_temas = 1.0 + self.alpha * (n_temas - 1)
-
-        t_base = self.t_min + (self.t_max - self.t_min) * f_dif * g_temas
-        return round(t_base, 2)
-
-    def _update_rating(self, p_solve: float, solved: bool) -> int:
-        """Actualiza el rating del estudiante y devuelve el cambio ΔR.
-
-        Si resuelve : ΔR = C · (1 - P_éxito)  -> más puntos si era difícil
-        Si fracasa  : ΔR = 0
-        """
-        if solved:
-            delta = int(round(self.c_elo * (1.0 - p_solve)))
-            self.rating = min(_MAX_RATING, self.rating + delta)
-            return delta
-        return 0
-
     def __repr__(self) -> str:
+        top3 = sorted(
+            self.topic_ratings.items(), key=lambda x: x[1], reverse=True
+        )[:3]
+        top3_str = ", ".join(f"{t}={r:.0f}" for t, r in top3)
         return (
-            f"StudentModel("
-            f"rating={self.rating}, "
+            f"StudentModel(global={self.global_rating:.0f}, "
+            f"top3=[{top3_str}], "
             f"fatigue={self.fatigue:.2f}, "
-            f"time_spent={self.time_spent_min:.1f}m, "
             f"solved={self.n_solved}/{self.n_attempted})"
         )
