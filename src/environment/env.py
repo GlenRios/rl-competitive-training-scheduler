@@ -14,7 +14,7 @@ Espacios
                         El agente elige el índice del problema a resolver.
 
     observation_space : Box(low=0, high=1, shape=(STUDENT_OBS_DIM,))
-                        Estado del estudiante normalizado.
+                        Estado del estudiante normalizado (24 valores).
                         La matriz de problemas se pasa en `info` para que
                         el agente DQN construya el input completo.
 
@@ -56,6 +56,7 @@ from src.environment.observation_builder import (
 )
 from src.environment.problem import Problem
 from src.environment.student_model import StudentModel
+from src.environment.student_generator import StudentProfileGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,7 @@ class TrainingEnv(gym.Env):
         session_budget_min : float = 120.0,
         random_seed        : Optional[int] = None,
         student_kwargs     : Optional[dict] = None,
+        profile_generator  : Optional[StudentProfileGenerator] = None,
     ) -> None:
         super().__init__()
 
@@ -98,6 +100,7 @@ class TrainingEnv(gym.Env):
         self.initial_rating      = initial_rating
         self.session_budget_min  = session_budget_min
         self.random_seed         = random_seed
+        self.profile_generator   = profile_generator
 
         # -- Espacios de Gymnasium --------------------------------------
         self.action_space = gym.spaces.Discrete(self.n_problems)
@@ -112,7 +115,6 @@ class TrainingEnv(gym.Env):
         # -- Módulos de soporte -----------------------------------------
         student_kwargs = student_kwargs or {}
         self._student  = StudentModel(
-            initial_rating     = initial_rating,
             session_budget_min = session_budget_min,
             random_seed        = random_seed,
             **student_kwargs,
@@ -143,7 +145,16 @@ class TrainingEnv(gym.Env):
         """
         super().reset(seed=seed)
 
-        self._student.reset()
+        # Si hay generador de perfiles, crear nuevo estudiante cada episodio
+        if self.profile_generator is not None:
+            profile = self.profile_generator.generate()
+            logger.debug(f"Nuevo perfil generado: {profile}")
+            self._student = profile.to_student_model(random_seed=seed)
+            self._obs_builder = ObservationBuilder(
+                self.problems, profile.session_budget_min
+            )
+        else:
+            self._student.reset()
         self._masker.reset()
         self._episode_reward  = 0.0
         self._step_count      = 0
@@ -207,17 +218,17 @@ class TrainingEnv(gym.Env):
         self._step_count     += 1
 
         step_record = {
-            "step"          : self._step_count,
-            "problem_id"    : problem.problem_id,
-            "problem_rating": problem.rating,
-            "solved"        : outcome.solved,
-            "p_solve"       : outcome.p_solve,
-            "time_min"      : outcome.time_min,
-            "reward"        : outcome.reward,
-            "delta_rating"  : outcome.delta_rating,
-            "new_rating"    : outcome.new_rating,
-            "fatigue"       : outcome.fatigue,
-            "time_remaining": outcome.time_remaining_min,
+            "step"             : self._step_count,
+            "problem_id"       : problem.problem_id,
+            "problem_rating"   : problem.rating,
+            "solved"           : outcome.solved,
+            "p_solve"          : outcome.p_solve,
+            "time_min"         : outcome.time_min,
+            "reward"           : outcome.reward,
+            "topic_deltas"     : outcome.topic_deltas,
+            "new_global_rating": outcome.new_global_rating,
+            "fatigue"          : outcome.fatigue,
+            "time_remaining"   : outcome.time_remaining_min,
         }
         self._episode_history.append(step_record)
 
