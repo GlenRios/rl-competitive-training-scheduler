@@ -45,9 +45,9 @@ logger = logging.getLogger(__name__)
 # Dimensiones exportadas — el agente DQN las usa para construir su red
 # ---------------------------------------------------------------------------
 
-STUDENT_OBS_DIM = 5    # longitud de state_vector del StudentModel
+STUDENT_OBS_DIM = 24   # longitud de state_vector del StudentModel (4 + 20 topics)
 PROBLEM_OBS_DIM = 24   # longitud de to_observation_vector de Problem
-FULL_OBS_DIM    = STUDENT_OBS_DIM + PROBLEM_OBS_DIM   # = 29
+FULL_OBS_DIM    = STUDENT_OBS_DIM + PROBLEM_OBS_DIM   # = 48
 
 
 # ---------------------------------------------------------------------------
