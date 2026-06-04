@@ -47,7 +47,8 @@ def make_problems(n: int = N_PROBLEMS) -> list[Problem]:
 
 
 def make_student_obs() -> np.ndarray:
-    return np.array([0.26, 0.1, 0.2, 0.7, 0.3], dtype=np.float32)
+    # STUDENT_OBS_DIM = 24 (4 scalars + 20 topic ratings)
+    return np.random.rand(STUDENT_OBS_DIM).astype(np.float32)
 
 
 def make_problem_matrix(n: int = N_PROBLEMS) -> np.ndarray:
@@ -56,10 +57,10 @@ def make_problem_matrix(n: int = N_PROBLEMS) -> np.ndarray:
 
 def make_transition(n_actions: int = N_ACTIONS) -> Transition:
     return Transition(
-        state_input      = np.random.rand(FULL_OBS_DIM).astype(np.float32),
+        state_input      = np.random.rand(FULL_OBS_DIM).astype(np.float32),  # 48
         action           = 0,
         reward           = 1.0,
-        next_student_obs = np.random.rand(STUDENT_OBS_DIM).astype(np.float32),
+        next_student_obs = np.random.rand(STUDENT_OBS_DIM).astype(np.float32),  # 24
         next_mask        = np.ones(n_actions, dtype=bool),
         terminated       = False,
     )
@@ -82,7 +83,7 @@ def buffer():
 
 @pytest.fixture
 def env(problems):
-    return TrainingEnv(problems, initial_rating=1500, session_budget_min=120, random_seed=0)
+    return TrainingEnv(problems, session_budget_min=120, random_seed=0)
 
 
 @pytest.fixture

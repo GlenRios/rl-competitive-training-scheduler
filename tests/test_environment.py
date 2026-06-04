@@ -53,7 +53,11 @@ def problems() -> list[Problem]:
 
 @pytest.fixture
 def student() -> StudentModel:
-    return StudentModel(initial_rating=1500, session_budget_min=120, random_seed=42)
+    from src.environment.problem import CANONICAL_TOPICS
+    return StudentModel(
+        topic_ratings={t: 1500 for t in CANONICAL_TOPICS},
+        session_budget_min=120, random_seed=42,
+    )
 
 
 @pytest.fixture
@@ -68,7 +72,7 @@ def masker(problems) -> ActionMasker:
 
 @pytest.fixture
 def env(problems) -> TrainingEnv:
-    return TrainingEnv(problems, initial_rating=1500, session_budget_min=120, random_seed=42)
+    return TrainingEnv(problems, session_budget_min=120, random_seed=42)
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +177,9 @@ class TestActionMasker:
 
     def test_problem_invalid_when_no_time(self, problems):
         # Estudiante con casi sin tiempo → problemas difíciles no caben
-        s = StudentModel(initial_rating=1500, session_budget_min=120, random_seed=0)
+        from src.environment.problem import CANONICAL_TOPICS
+        s = StudentModel(topic_ratings={t: 1500 for t in CANONICAL_TOPICS},
+                         session_budget_min=120, random_seed=0)
         s.time_spent_min = 119.0   # solo 1 minuto restante
         masker = ActionMasker(problems)
         mask = masker.get_mask(s)
@@ -205,7 +211,7 @@ class TestTrainingEnvInit:
 
     def test_raises_on_empty_problems(self):
         with pytest.raises(ValueError, match="vacía"):
-            TrainingEnv([], initial_rating=1500)
+            TrainingEnv([], session_budget_min=120)
 
 
 class TestTrainingEnvReset:
@@ -328,7 +334,7 @@ class TestTrainingEnvStep:
     def test_terminated_when_all_problems_attempted(self):
         # Con solo 2 problemas fáciles y tiempo amplio → termina tras intentar todos
         p = make_problems(2)
-        e = TrainingEnv(p, initial_rating=1500, session_budget_min=300, random_seed=0)
+        e = TrainingEnv(p, session_budget_min=300, random_seed=0)
         _, info = e.reset()
         terminated = False
         steps = 0
