@@ -56,7 +56,7 @@ from src.environment.observation_builder import (
 )
 from src.environment.problem import Problem
 from src.environment.student_model import StudentModel
-from src.environment.student_generator import StudentProfileGenerator
+from src.environment.student_generator import StudentProfileGenerator, StudentProfile
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +89,7 @@ class TrainingEnv(gym.Env):
         random_seed        : Optional[int] = None,
         student_kwargs     : Optional[dict] = None,
         profile_generator  : Optional[StudentProfileGenerator] = None,
+        profiles           : Optional[list] = None,
     ) -> None:
         super().__init__()
 
@@ -101,6 +102,8 @@ class TrainingEnv(gym.Env):
         self.session_budget_min  = session_budget_min
         self.random_seed         = random_seed
         self.profile_generator   = profile_generator
+        self._profiles           = profiles or []
+        self._profile_idx        = 0
 
         # -- Espacios de Gymnasium --------------------------------------
         self.action_space = gym.spaces.Discrete(self.n_problems)
@@ -145,10 +148,20 @@ class TrainingEnv(gym.Env):
         """
         super().reset(seed=seed)
 
-        # Si hay generador de perfiles, crear nuevo estudiante cada episodio
-        if self.profile_generator is not None:
+        # Seleccionar perfil para este episodio
+        if self._profiles:
+            # Lista pre-generada: ciclar en orden
+            profile = self._profiles[self._profile_idx % len(self._profiles)]
+            self._profile_idx += 1
+            logger.debug(f"Perfil #{self._profile_idx}: {profile}")
+            self._student = profile.to_student_model(random_seed=seed)
+            self._obs_builder = ObservationBuilder(
+                self.problems, profile.session_budget_min
+            )
+        elif self.profile_generator is not None:
+            # Generador en tiempo real (mas lento)
             profile = self.profile_generator.generate()
-            logger.debug(f"Nuevo perfil generado: {profile}")
+            logger.debug(f"Perfil generado: {profile}")
             self._student = profile.to_student_model(random_seed=seed)
             self._obs_builder = ObservationBuilder(
                 self.problems, profile.session_budget_min
