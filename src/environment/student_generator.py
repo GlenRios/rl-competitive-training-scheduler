@@ -263,6 +263,86 @@ Generate a profile for: {student_type}"""
         """Genera n perfiles distintos."""
         return [self.generate() for _ in range(n)]
 
+    def generate_and_save(self, n: int, path: str) -> list[StudentProfile]:
+        """Genera n perfiles, los guarda en JSON y los devuelve.
+
+        Parameters
+        ----------
+        n    : int  -- numero de perfiles a generar
+        path : str  -- ruta del archivo JSON de salida
+
+        Returns
+        -------
+        list[StudentProfile]
+        """
+        import json as _json
+        from pathlib import Path as _Path
+
+        logger.info(f"Generando {n} perfiles de estudiante...")
+        profiles = []
+        for i in range(n):
+            profile = self.generate()
+            profiles.append(profile)
+            if (i + 1) % 10 == 0 or (i + 1) == n:
+                logger.info(f"  {i+1}/{n} perfiles generados ({profile.source})")
+
+        _Path(path).parent.mkdir(parents=True, exist_ok=True)
+        data = [
+            {
+                "archetype"          : p.archetype,
+                "global_rating"      : p.global_rating,
+                "session_budget_min" : p.session_budget_min,
+                "topic_ratings"      : p.topic_ratings,
+                "source"             : p.source,
+            }
+            for p in profiles
+        ]
+        _Path(path).write_text(
+            _json.dumps(data, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        logger.info(f"  {n} perfiles guardados en {path}")
+        return profiles
+
+    @staticmethod
+    def load_profiles(path: str) -> list[StudentProfile]:
+        """Carga perfiles desde un archivo JSON generado previamente.
+
+        Parameters
+        ----------
+        path : str -- ruta al archivo JSON
+
+        Returns
+        -------
+        list[StudentProfile]
+
+        Raises
+        ------
+        FileNotFoundError si el archivo no existe.
+        """
+        import json as _json
+        from pathlib import Path as _Path
+
+        p = _Path(path)
+        if not p.exists():
+            raise FileNotFoundError(
+                f"No se encontro el archivo de perfiles: {path}\n"
+                "Ejecuta primero: generator.generate_and_save(n, path)"
+            )
+
+        data     = _json.loads(p.read_text(encoding="utf-8"))
+        profiles = []
+        for d in data:
+            profiles.append(StudentProfile(
+                archetype          = d["archetype"],
+                global_rating      = float(d["global_rating"]),
+                session_budget_min = float(d["session_budget_min"]),
+                topic_ratings      = {k: float(v) for k, v in d["topic_ratings"].items()},
+                source             = d.get("source", "loaded"),
+            ))
+        logger.info(f"  {len(profiles)} perfiles cargados desde {path}")
+        return profiles
+
     # ------------------------------------------------------------------
     # Generacion via LLM
     # ------------------------------------------------------------------
