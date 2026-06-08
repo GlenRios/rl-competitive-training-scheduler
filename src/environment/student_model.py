@@ -157,6 +157,10 @@ class StudentModel:
         c_elo                : float  = _C_ELO,
         r_exito              : float  = _R_EXITO,
         r_fracaso            : float  = _R_FRACASO,
+        r_topic_new          : float  = 2.0,
+        challenge_weight     : float  = 2.0,
+        progression_weight   : float  = 1.5,
+        trivial_penalty      : float  = -3.0,
     ) -> None:
         if session_budget_min <= 0:
             raise ValueError("session_budget_min debe ser positivo.")
@@ -175,6 +179,10 @@ class StudentModel:
         self.c_elo                = c_elo
         self.r_exito              = r_exito
         self.r_fracaso            = r_fracaso
+        self.r_topic_new          = r_topic_new
+        self.challenge_weight     = challenge_weight
+        self.progression_weight   = progression_weight
+        self.trivial_penalty_val  = trivial_penalty
         self._rng                 = random.Random(random_seed)
 
         # Inicializar topic_ratings
@@ -196,14 +204,15 @@ class StudentModel:
             )
 
         # Estado de sesion (se resetea en reset())
-        self.topic_ratings       : dict[str, float] = {}
-        self.global_rating       : float             = 0.0
-        self.fatigue             : float             = 0.0
-        self.time_spent_min      : float             = 0.0
-        self.problems_solved     : list[str]         = []
-        self.problems_attempted  : list[str]         = []
-        self.topics_seen         : set[str]          = set()
-        self._topic_attempts     : dict[str, int]    = {}
+        self.topic_ratings        : dict[str, float] = {}
+        self.global_rating        : float             = 0.0
+        self.fatigue              : float             = 0.0
+        self.time_spent_min       : float             = 0.0
+        self.problems_solved      : list[str]         = []
+        self.problems_attempted   : list[str]         = []
+        self.topics_seen          : set[str]          = set()
+        self._topic_attempts      : dict[str, int]    = {}
+        self._last_problem_rating : float             = 0.0
 
         self.reset()
 
@@ -244,10 +253,24 @@ class StudentModel:
         if solved:
             topic_deltas = self._update_topic_ratings(problem_rating, problem_tags)
             self._update_global_rating()
-            mean_delta   = sum(topic_deltas.values()) / max(1, len(topic_deltas))
-            reward       = self.r_exito + mean_delta
+            mean_delta = sum(topic_deltas.values()) / max(1, len(topic_deltas))
+
+            # Bonus por tema nuevo (fomenta diversidad tematica)
+            canonical_tags  = [t for t in problem_tags if t in self.topic_ratings]
+            new_topics      = [t for t in canonical_tags if t not in self.topics_seen]
+            topic_bonus     = self.r_topic_new if new_topics else 0.0
+
+            # Bonus/penalizacion por nivel de reto adecuado
+            challenge_bonus = self._compute_challenge_bonus(p_solve)
+
+            # Bonus por progresion de dificultad (problema mas dificil que el anterior)
+            progression_bonus = self._compute_progression_bonus(problem_rating)
+
+            reward = self.r_exito + mean_delta + topic_bonus + challenge_bonus + progression_bonus
         else:
             reward = self.r_fracaso
+
+        self._last_problem_rating = float(problem_rating)
 
         # 6. Actualizar estado de sesion
         self.time_spent_min += time_min
@@ -291,7 +314,8 @@ class StudentModel:
         self.problems_solved    = []
         self.problems_attempted = []
         self.topics_seen        = set()
-        self._topic_attempts    = {t: 0 for t in CANONICAL_TOPICS}
+        self._topic_attempts      = {t: 0 for t in CANONICAL_TOPICS}
+        self._last_problem_rating = 0.0
 
     # ------------------------------------------------------------------
     # Formulas publicas (sin efecto de estado)
@@ -447,6 +471,40 @@ class StudentModel:
             return 1.0 / (1.0 + math.exp(-x))
         ex = math.exp(x)
         return ex / (1.0 + ex)
+
+    def _compute_challenge_bonus(self, p_solve: float) -> float:
+        """Bonus por reto adecuado.
+
+        - p_solve en [0.35, 0.75]: zona ideal de aprendizaje → bonus maximo
+        - p_solve > 0.88: problema trivial → penalizacion
+        - p_solve < 0.15: problema imposible → penalizacion leve
+        """
+        if p_solve > 0.80:
+            return self.trivial_penalty_val     # muy facil
+        if p_solve < 0.15:
+            return -1.0                          # imposible
+        # Funcion campana con maximo en p=0.55
+        center    = 0.55
+        half_span = 0.35
+        dist      = abs(p_solve - center) / half_span
+        return round(self.challenge_weight * max(0.0, 1.0 - dist), 3)
+
+    def _compute_progression_bonus(self, problem_rating: int) -> float:
+        """Bonus por progresion de dificultad.
+
+        Premia cuando el problema actual es mas dificil que el anterior.
+        Penaliza ligeramente si va muy para atras.
+        """
+        if self._last_problem_rating == 0.0:
+            return 0.0   # primer problema, sin referencia
+        delta_rating = problem_rating - self._last_problem_rating
+        if delta_rating >= 200:
+            return self.progression_weight       # gran salto hacia arriba
+        elif delta_rating >= 0:
+            return round(self.progression_weight * delta_rating / 200, 3)
+        else:
+            # Regresion: penalizacion proporcional
+            return round(max(-1.0, delta_rating / 400), 3)
 
     def __repr__(self) -> str:
         top3 = sorted(
