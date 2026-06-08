@@ -408,14 +408,14 @@ Generate a profile for: {student_type}"""
             topic_ratings: dict[str, float] = {}
             for topic in CANONICAL_TOPICS:
                 val = topic_ratings_raw.get(topic, 1200)
-                # Clampar al rango valido
-                topic_ratings[topic] = max(800, min(3000, float(val)))
+                # Clampar a rango realista (max 1900 para evitar perfiles irreales)
+                topic_ratings[topic] = max(800, min(1900, float(val)))
 
             global_rating = float(
                 data.get("global_rating",
                          sum(topic_ratings.values()) / len(topic_ratings))
             )
-            global_rating = max(800, min(3000, global_rating))
+            global_rating = max(800, min(1900, global_rating))
 
             budget = float(data.get("session_budget_min", 120))
             budget = max(60, min(180, budget))
