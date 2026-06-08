@@ -83,6 +83,8 @@ class DQNTrainer:
         target_sync_every: int   = 50,
         checkpoint_dir   : str | Path = "experiments/results/",
         log_every        : int   = 10,
+        rest_every       : int   = 100,
+        rest_seconds     : float = 2.0,
     ) -> None:
         self.env               = env
         self.agent             = agent
@@ -95,6 +97,8 @@ class DQNTrainer:
         self.target_sync_every = target_sync_every
         self.checkpoint_dir    = Path(checkpoint_dir)
         self.log_every         = log_every
+        self.rest_every        = rest_every
+        self.rest_seconds      = rest_seconds
 
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
@@ -164,6 +168,10 @@ class DQNTrainer:
             if ep_reward > best_reward:
                 best_reward = ep_reward
                 self.agent.save(self.checkpoint_dir / "best_agent.pt")
+
+            # Pausa periodica para no sobrecalentar la maquina
+            if self.rest_every > 0 and ep % self.rest_every == 0:
+                time.sleep(self.rest_seconds)
 
             # Log periódico
             if ep % self.log_every == 0 or ep == 1:
