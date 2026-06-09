@@ -116,23 +116,6 @@ Respond in this exact JSON format:
 }}"""
 
 
-def build_explain_prompt(history: list[dict]) -> str:
-    ratings = [h["problem_rating"] for h in history]
-    solved  = sum(1 for h in history if h["solved"])
-    tags    = [t for h in history for t in h["problem_tags"][:2]]
-
-    return f"""You are a competitive programming coach. 
-    
-A training session had the following characteristics:
-- {len(history)} problems attempted, {solved} solved
-- Rating range: {min(ratings)} to {max(ratings)}
-- Main topics: {', '.join(set(tags)[:6])}
-
-In 2-3 paragraphs in Spanish, explain why this sequence of problems is 
-pedagogically effective (or not) for a competitive programmer. 
-Focus on learning value and progression quality."""
-
-
 col1, col2 = st.columns(2)
 
 with col1:
@@ -183,23 +166,6 @@ with col1:
                 except Exception as e:
                     st.error(f"Error consultando Ollama: {e}")
 
-with col2:
-    st.markdown("### Explicacion Detallada")
-    if st.button("Generar explicacion", disabled=not ollama_ok, use_container_width=True):
-        prompt = build_explain_prompt(history)
-        with st.spinner("Generando explicacion..."):
-            try:
-                resp = requests.post(
-                    OLLAMA_URL,
-                    json={"model": MODEL, "prompt": prompt, "stream": False,
-                          "options": {"temperature": 0.7}},
-                    timeout=90,
-                )
-                explanation = resp.json().get("response", "")
-                st.markdown(explanation)
-
-            except Exception as e:
-                st.error(f"Error: {e}")
 
 # ── Exportar sesion ────────────────────────────────────────────────────────
 st.markdown("---")
