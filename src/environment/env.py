@@ -258,10 +258,17 @@ class TrainingEnv(gym.Env):
         )
         truncated  = False
 
+        # Recompensa final al terminar el episodio
+        step_reward = outcome.reward
+        if terminated:
+            step_reward += self._compute_terminal_reward()
+
+        self._episode_reward += step_reward - outcome.reward  # ajustar acumulador
+
         obs  = self._obs_builder.student_obs(self._student)
         info = self._build_info(step_record=step_record)
 
-        return obs, outcome.reward, terminated, truncated, info
+        return obs, step_reward, terminated, truncated, info
 
     # ------------------------------------------------------------------
     # render()
@@ -301,6 +308,65 @@ class TrainingEnv(gym.Env):
     # ------------------------------------------------------------------
     # Métodos privados
     # ------------------------------------------------------------------
+
+    def _compute_terminal_reward(self) -> float:
+        """Recompensa final al terminar el episodio.
+
+        Tres componentes:
+        1. Spearman: bonus si la secuencia fue de menor a mayor dificultad,
+                     penalizacion fuerte si fue al reves.
+        2. Cobertura: bonus por cada tema algoritmico unico cubierto.
+        3. Eficiencia: bonus por tiempo sobrante (el DQN aprende a no
+                       malgastar el presupuesto en problemas triviales).
+        """
+        history = self._episode_history
+        if not history:
+            return 0.0
+
+        terminal = 0.0
+
+        # 1. Spearman de progresion de dificultad
+        ratings = [h["problem_rating"] for h in history]
+        if len(ratings) >= 2:
+            spearman = self._spearman(ratings)
+            if spearman > 0:
+                terminal += 10.0 * spearman   # hasta +10
+            else:
+                terminal += -20.0 * abs(spearman)  # hasta -20 si orden inverso
+
+        # 2. Cobertura de temas algoritmicos (excluir meta-tags)
+        from src.environment.student_model import META_TAGS
+        algo_topics = self._student.topics_seen - META_TAGS
+        terminal += len(algo_topics) * 2.0   # +2 por cada tema distinto
+
+        # 3. Eficiencia de tiempo
+        terminal += self._student.time_remaining_min * 0.5
+
+        return round(terminal, 2)
+
+    @staticmethod
+    def _spearman(values: list) -> float:
+        """Correlacion de Spearman entre orden y valores."""
+        import math
+        n = len(values)
+        if n < 2:
+            return 0.0
+        # Calcular rangos
+        sorted_idx = sorted(range(n), key=lambda i: values[i])
+        ranks = [0.0] * n
+        i = 0
+        while i < n:
+            j = i
+            while j < n - 1 and values[sorted_idx[j+1]] == values[sorted_idx[i]]:
+                j += 1
+            rank = (i + j) / 2.0 + 1.0
+            for k in range(i, j + 1):
+                ranks[sorted_idx[k]] = rank
+            i = j + 1
+        orders = list(range(1, n + 1))
+        d2 = sum((o - r) ** 2 for o, r in zip(orders, ranks))
+        rho = 1.0 - 6.0 * d2 / (n * (n**2 - 1))
+        return round(rho, 4) if not math.isnan(rho) else 0.0
 
     def _build_info(self, step_record: Optional[dict] = None) -> dict:
         """Construye el diccionario `info` retornado en reset/step."""

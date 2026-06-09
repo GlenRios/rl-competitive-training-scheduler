@@ -2,16 +2,16 @@
 student_model.py -- Modelo del estudiante virtual con ELO por tema
 
 Cambios v3 (basados en analisis comparativo DQN vs baselines):
-    1. c_elo reducido a 3.0 (aprendizaje mas gradual, menos volatilidad)
-    2. delta ELO limitado a [-15, +30] por problema
-    3. factor de fatiga en la ganancia ELO (fatigado -> aprende menos)
-    4. _effective_rating usa minimo de ELOs (no media) -- el eslabon mas debil limita
-    5. lambda_fatigue aumentado a 1.2 (fatiga afecta mas al exito)
-    6. fatigue_per_minute aumentado a 0.020
-    7. fatigue_mult en t_think (fatigado -> resuelve mas lento)
-    8. pesos de recompensa aumentados: progression=5.0, challenge=4.0
-    9. stagnation_penalty=-6.0, topic_overuse_penalty=-10.0
-    10. recompensa final por eficiencia de tiempo en env.py
+  - c_elo: 10.0 -> 3.0 (aprendizaje mas gradual, menos volatilidad)
+  - lambda_fatigue: 0.5 -> 1.2 (fatiga afecta mas al exito)
+  - fatigue_per_minute: 0.012 -> 0.020 (fatiga sube mas rapido)
+  - _effective_rating: media -> MINIMO de ELOs (eslabón mas debil limita)
+  - _update_topic_ratings: factor de fatiga en ganancia + limite +-30 pts
+  - _solve_time_base: fatiga multiplica el tiempo de resolucion
+  - progression_weight: 2.0 -> 5.0
+  - challenge_weight: 3.0 -> 4.0
+  - stagnation_penalty: -2.0 -> -6.0
+  - topic_overuse_penalty: -6.0 -> -10.0
 """
 
 import logging
@@ -25,11 +25,11 @@ from src.environment.problem import CANONICAL_TOPICS, N_TOPICS
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Parametros por defecto
+# Constantes
 # ---------------------------------------------------------------------------
 
 _THETA          = 400.0
-_LAMBDA_FATIGUE = 1.2      # aumentado de 0.5 a 1.2
+_LAMBDA_FATIGUE = 1.2      # aumentado de 0.5
 _T_MIN          = 5.0
 _T_MAX          = 65.0
 _T_READ_BASE    = 3.0
@@ -38,14 +38,14 @@ _DELTA_MAX_TIME = 800.0
 _ALPHA          = 0.2
 _BETA           = 0.6
 _EPS            = 0.25
-_C_ELO          = 3.0      # reducido de 10.0 a 3.0
+_C_ELO          = 3.0      # reducido de 10.0
 _R_EXITO        = 10.0
 _R_FRACASO      = -2.0
 _MIN_RATING     = 800
 _MAX_RATING     = 3500
 _DEFAULT_TOPIC_RATING = 1200
 
-# Tags meta (no algoritmicos): se excluyen de diversidad y repeticion
+# Tags meta: no son temas algoritmicos reales (~60-70% de problemas CF)
 META_TAGS = frozenset(["implementation", "brute force"])
 
 
@@ -99,7 +99,7 @@ class StudentModel:
         stagnation_window    : int    = 3,
         topic_overuse_penalty: float  = -10.0,
         topic_overuse_thresh : float  = 0.30,
-        topic_diversity_bonus: float  =  1.5,
+        topic_diversity_bonus: float  = 1.5,
     ) -> None:
         if session_budget_min <= 0:
             raise ValueError("session_budget_min debe ser positivo.")
@@ -129,6 +129,7 @@ class StudentModel:
         self.topic_diversity_bonus = topic_diversity_bonus
         self._rng                  = random.Random(random_seed)
 
+        # Inicializar topic_ratings
         self._initial_topic_ratings: dict[str, float] = {}
         for topic in CANONICAL_TOPICS:
             val = float(topic_ratings[topic]) if topic_ratings and topic in topic_ratings \
@@ -138,18 +139,18 @@ class StudentModel:
         self._initial_global_rating = float(global_rating) if global_rating is not None \
             else sum(self._initial_topic_ratings.values()) / N_TOPICS
 
-        self.topic_ratings        : dict[str, float] = {}
-        self.global_rating        : float             = 0.0
-        self.fatigue              : float             = 0.0
-        self.time_spent_min       : float             = 0.0
-        self.problems_solved      : list[str]         = []
-        self.problems_attempted   : list[str]         = []
-        self.topics_seen          : set[str]          = set()
-        self._topic_attempts      : dict[str, int]    = {}
-        self._last_problem_rating : float             = 0.0
-        self._recent_ratings      : list[float]       = []
-        # Para limitar caidas catastroficas de rating global
-        self._session_start_rating: float             = 0.0
+        # Estado de sesion
+        self.topic_ratings         : dict[str, float] = {}
+        self.global_rating         : float             = 0.0
+        self._session_floor_rating : float             = 0.0  # suelo: evita caidas > 50 pts
+        self.fatigue               : float             = 0.0
+        self.time_spent_min        : float             = 0.0
+        self.problems_solved       : list[str]         = []
+        self.problems_attempted    : list[str]         = []
+        self.topics_seen           : set[str]          = set()
+        self._topic_attempts       : dict[str, int]    = {}
+        self._last_problem_rating  : float             = 0.0
+        self._recent_ratings       : list[float]       = []
 
         self.reset()
 
@@ -194,10 +195,12 @@ class StudentModel:
             diversity_bonus   = self._compute_diversity_bonus(problem_tags)
 
             reward = (self.r_exito + mean_delta + topic_bonus + challenge_bonus
-                      + progression_bonus + stagnation_pen + repetition_pen + diversity_bonus)
+                      + progression_bonus + stagnation_pen + repetition_pen
+                      + diversity_bonus)
         else:
             reward = self.r_fracaso
 
+        # Actualizar estado
         self.time_spent_min   += time_min
         self.fatigue           = min(1.0, self.fatigue + time_min * self.fatigue_per_minute)
         self.topics_seen.update(problem_tags)
@@ -215,6 +218,10 @@ class StudentModel:
             if solved:
                 self.problems_solved.append(problem_id)
 
+        # Proteccion contra caidas catastroficas de rating global
+        if self.global_rating < self._session_floor_rating - 50:
+            self.global_rating = self._session_floor_rating - 50
+
         return AttemptOutcome(
             solved             = solved,
             time_min           = time_min,
@@ -228,26 +235,23 @@ class StudentModel:
         )
 
     def reset(self) -> None:
-        self.topic_ratings         = dict(self._initial_topic_ratings)
-        self.global_rating         = self._initial_global_rating
-        self._session_start_rating = self._initial_global_rating
-        self.fatigue               = 0.0
-        self.time_spent_min        = 0.0
-        self.problems_solved       = []
-        self.problems_attempted    = []
-        self.topics_seen           = set()
-        self._topic_attempts       = {t: 0 for t in CANONICAL_TOPICS}
-        self._last_problem_rating  = 0.0
-        self._recent_ratings       = []
+        self.topic_ratings          = dict(self._initial_topic_ratings)
+        self.global_rating          = self._initial_global_rating
+        self._session_floor_rating  = self._initial_global_rating
+        self.fatigue                = 0.0
+        self.time_spent_min         = 0.0
+        self.problems_solved        = []
+        self.problems_attempted     = []
+        self.topics_seen            = set()
+        self._topic_attempts        = {t: 0 for t in CANONICAL_TOPICS}
+        self._last_problem_rating   = 0.0
+        self._recent_ratings        = []
 
     # ------------------------------------------------------------------
     # Formulas publicas
     # ------------------------------------------------------------------
 
     def probability_of_solving(self, problem_rating: int, problem_tags: list) -> float:
-        """P = sigma((R_ef - d_p) / theta - lambda * F)
-        Usa el MINIMO de ELOs por tema (no la media).
-        """
         r_ef = self._effective_rating(problem_tags)
         x    = (r_ef - problem_rating) / self.theta - self.lambda_fatigue * self.fatigue
         return round(self._sigmoid(x), 4)
@@ -292,10 +296,8 @@ class StudentModel:
         r_range        = _MAX_RATING - _MIN_RATING
         global_norm    = (self.global_rating - _MIN_RATING) / r_range
         time_used_norm = self.time_spent_min / self.session_budget_min
-        topic_norms    = [
-            (self.topic_ratings[t] - _MIN_RATING) / r_range
-            for t in CANONICAL_TOPICS
-        ]
+        topic_norms    = [(self.topic_ratings[t] - _MIN_RATING) / r_range
+                          for t in CANONICAL_TOPICS]
         return [
             round(global_norm,     4),
             round(self.fatigue,    4),
@@ -304,7 +306,7 @@ class StudentModel:
         ] + [round(v, 4) for v in topic_norms]
 
     # ------------------------------------------------------------------
-    # Calculo de recompensa
+    # Recompensas
     # ------------------------------------------------------------------
 
     def _compute_challenge_bonus(self, problem_rating: int) -> float:
@@ -337,10 +339,8 @@ class StudentModel:
             return 0.0
         if len(self._recent_ratings) < self.stagnation_window - 1:
             return 0.0
-        trivial_prev = sum(
-            1 for r in self._recent_ratings[-(self.stagnation_window - 1):]
-            if self.global_rating - r > 300
-        )
+        trivial_prev = sum(1 for r in self._recent_ratings[-(self.stagnation_window - 1):]
+                           if self.global_rating - r > 300)
         if trivial_prev >= self.stagnation_window - 1:
             return self.stagnation_penalty
         return 0.0
@@ -376,23 +376,21 @@ class StudentModel:
         return round(total_bonus / max(1, len(canonical)), 3)
 
     # ------------------------------------------------------------------
-    # Formulas internas
+    # Metodos privados
     # ------------------------------------------------------------------
 
     def _effective_rating(self, problem_tags: list) -> float:
-        """Usa el MINIMO de topic_ratings -- el eslabon mas debil limita el exito."""
+        """Usa el MINIMO de topic_ratings — el eslabon mas debil limita el rendimiento."""
         canonical = [t for t in problem_tags if t in self.topic_ratings]
         if not canonical:
             return self.global_rating
         return min(self.topic_ratings[t] for t in canonical)
 
     def _update_topic_ratings(self, problem_rating: int, problem_tags: list) -> dict:
-        """ELO por tema con:
-        - factor de fatiga (fatigado aprende menos)
-        - delta limitado a [-15, +30]
-        """
+        """ELO con factor de fatiga y limite +-30 puntos por problema."""
         deltas: dict = {}
-        fatigue_factor = max(0.3, 1.0 - 0.5 * self.fatigue)  # min 0.3 para no anular el aprendizaje
+        # Factor de fatiga: fatigado aprende menos (max reduccion 50%)
+        fatigue_factor = 1.0 - 0.5 * self.fatigue
 
         for tag in problem_tags:
             if tag not in self.topic_ratings:
@@ -402,7 +400,7 @@ class StudentModel:
             p_t         = self._sigmoid((r_t - problem_rating) / self.theta)
             challenge_t = self._sigmoid(gap_t / self.theta)
             delta       = self.c_elo * (1.0 - p_t) * challenge_t * fatigue_factor
-            delta       = max(-15.0, min(30.0, delta))   # limite [-15, +30]
+            delta       = max(-15.0, min(30.0, delta))   # limite +-30 pts
             delta       = round(delta, 3)
 
             self.topic_ratings[tag] = max(_MIN_RATING, min(_MAX_RATING, r_t + delta))
@@ -410,7 +408,7 @@ class StudentModel:
         return deltas
 
     def _update_global_rating(self) -> None:
-        """Promedio ponderado con suelo: no puede caer mas de 50 pts respecto al inicio."""
+        """Promedio ponderado por intentos. Protege contra caidas > 50 pts."""
         total_w = 0.0
         w_sum   = 0.0
         for t in CANONICAL_TOPICS:
@@ -418,26 +416,22 @@ class StudentModel:
             w_sum  += self.topic_ratings[t] * w
             total_w += w
         new_global = w_sum / total_w
-        # Limitar caida catastrofica: max -50 puntos respecto al inicio de sesion
-        floor = self._session_start_rating - 50.0
-        self.global_rating = max(floor, new_global)
+        # No permitir caida mayor a 50 puntos respecto al inicio de sesion
+        self.global_rating = max(new_global, self._session_floor_rating - 50)
 
     def _solve_time_base(self, problem_rating: int, r_ef: float, problem_tags: list) -> float:
-        """T_total = T_think * fatigue_mult + T_read + T_code + T_debug
-
-        Cambio v3: T_think se multiplica por (1 + fatiga) -- fatigado resuelve mas lento.
-        """
+        """T_total = (T_think * fatigue_mult) + T_read + T_code + T_debug"""
         n_temas = max(1, len(problem_tags))
 
-        f_dif   = (problem_rating - r_ef + self.delta0) / self.delta_max_time
-        f_dif   = max(0.0, min(1.0, f_dif))
-        g_temas = 1.0 + self.alpha * (n_temas - 1)
-        t_think_base = self.t_min + (self.t_max - self.t_min) * f_dif * g_temas
+        # T_think con multiplicador de fatiga (fatigado tarda mas en pensar)
+        f_dif       = (problem_rating - r_ef + self.delta0) / self.delta_max_time
+        f_dif       = max(0.0, min(1.0, f_dif))
+        g_temas     = 1.0 + self.alpha * (n_temas - 1)
+        t_think_raw = self.t_min + (self.t_max - self.t_min) * f_dif * g_temas
+        fatigue_mult = 1.0 + self.fatigue   # fatiga 0.5 -> +50% tiempo de pensar
+        t_think      = t_think_raw * fatigue_mult
 
-        # Fatiga incrementa el tiempo de pensar/resolver
-        fatigue_mult = 1.0 + self.fatigue
-        t_think      = t_think_base * fatigue_mult
-
+        # T_overhead: lectura + implementacion + debug (independiente del estado)
         t_read  = _T_READ_BASE * (1.0 + 0.2 * (n_temas - 1))
         t_code  = 3.0 * (problem_rating / 1600.0) * (1.0 + 0.15 * (n_temas - 1))
         t_debug = 0.25 * t_code
