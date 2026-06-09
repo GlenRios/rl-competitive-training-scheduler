@@ -181,7 +181,10 @@ class RolloutSelector(ProblemSelector):
             random_seed        = None,
             theta              = student.theta,
             lambda_fatigue     = student.lambda_fatigue,
-            fatigue_per_problem= student.fatigue_per_problem,
+            # Compatible con fatigue_per_minute (nuevo) y fatigue_per_problem (antiguo)
+            **({"fatigue_per_minute": student.fatigue_per_minute}
+               if hasattr(student, "fatigue_per_minute")
+               else {"fatigue_per_problem": student.fatigue_per_problem}),
             t_min              = student.t_min,
             t_max              = student.t_max,
             delta0             = student.delta0,
@@ -194,9 +197,12 @@ class RolloutSelector(ProblemSelector):
         )
         # Ajustar estado de sesion del estudiante simulado
         sim_student.time_spent_min = new_time_spent
-        sim_student.fatigue        = min(
-            1.0, student.fatigue + student.fatigue_per_problem
-        )
+        # Fatiga: proporcional al tiempo (nuevo) o por problema (antiguo)
+        if hasattr(student, "fatigue_per_minute"):
+            fatigue_inc = t_used * student.fatigue_per_minute
+        else:
+            fatigue_inc = student.fatigue_per_problem
+        sim_student.fatigue = min(1.0, student.fatigue + fatigue_inc)
         sim_student.topics_seen    = student.topics_seen | set(problem.tags_list)
 
         # Mascara: marcar first_idx como usado
