@@ -132,7 +132,15 @@ class DQNTrainer:
         logger.info(f"  Target sync    : cada {self.target_sync_every} ep.")
         logger.info(separator)
 
-        best_reward    = float("-inf")
+        best_ckpt   = self.checkpoint_dir / "best_agent.pt"
+        if best_ckpt.exists():
+            best_reward = self.agent.load(best_ckpt)
+            logger.info(
+                f"  Checkpoint previo detectado — best_reward={best_reward:.2f}. "
+                "Solo se sobreescribirá si se supera."
+            )
+        else:
+            best_reward = float("-inf")
         total_steps    = 0
 
         for ep in range(1, n_episodes + 1):
@@ -167,7 +175,7 @@ class DQNTrainer:
             # Guardar mejor checkpoint
             if ep_reward > best_reward:
                 best_reward = ep_reward
-                self.agent.save(self.checkpoint_dir / "best_agent.pt")
+                self.agent.save(self.checkpoint_dir / "best_agent.pt", best_reward=best_reward)
 
             # Pausa periodica para no sobrecalentar la maquina
             if self.rest_every > 0 and ep % self.rest_every == 0:
