@@ -309,8 +309,16 @@ class DQNAgent:
         self.target_net.load_state_dict(self.online_net.state_dict())
         logger.debug("Target network sincronizada con online network")
 
-    def save(self, path: str | Path) -> None:
-        """Guarda el estado del agente en disco."""
+    def save(self, path: str | Path, best_reward: float = float("-inf")) -> None:
+        """Guarda el estado del agente en disco.
+
+        Parameters
+        ----------
+        path         : ruta del archivo .pt
+        best_reward  : mejor recompensa alcanzada hasta ahora, para que
+                       la próxima sesión de entrenamiento pueda continuar
+                       desde ese umbral sin sobreescribir un modelo mejor.
+        """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save({
@@ -320,17 +328,26 @@ class DQNAgent:
             "obs_dim"     : self.obs_dim,
             "n_actions"   : self.n_actions,
             "gamma"       : self.gamma,
+            "best_reward" : best_reward,
         }, path)
-        logger.info(f"Checkpoint guardado en {path}")
+        logger.info(f"Checkpoint guardado en {path} (best_reward={best_reward:.2f})")
 
-    def load(self, path: str | Path) -> None:
-        """Carga el estado del agente desde disco."""
+    def load(self, path: str | Path) -> float:
+        """Carga el estado del agente desde disco.
+
+        Returns
+        -------
+        float — best_reward guardado en el checkpoint,
+                o -inf si el campo no existe (checkpoints antiguos).
+        """
         path = Path(path)
         checkpoint = torch.load(path, map_location=self.device)
         self.online_net.load_state_dict(checkpoint["online_net"])
         self.target_net.load_state_dict(checkpoint["target_net"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])
-        logger.info(f"Checkpoint cargado desde {path}")
+        best_reward = checkpoint.get("best_reward", float("-inf"))
+        logger.info(f"Checkpoint cargado desde {path} (best_reward={best_reward:.2f})")
+        return best_reward
 
     def __repr__(self) -> str:
         n_params = sum(p.numel() for p in self.online_net.parameters())
