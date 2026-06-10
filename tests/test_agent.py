@@ -283,7 +283,7 @@ class TestReplayBuffer:
 
 class TestDQNTrainer:
     @pytest.fixture
-    def trainer(self, env, agent, buffer, obs_builder):
+    def trainer(self, env, agent, buffer, obs_builder, tmp_path):
         return DQNTrainer(
             env               = env,
             agent             = agent,
@@ -295,6 +295,7 @@ class TestDQNTrainer:
             epsilon_decay_ep  = 5,
             target_sync_every = 2,
             log_every         = 2,
+            checkpoint_dir    = tmp_path,
         )
 
     def test_epsilon_at_start(self, trainer):
