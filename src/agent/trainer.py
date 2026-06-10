@@ -132,15 +132,21 @@ class DQNTrainer:
         logger.info(f"  Target sync    : cada {self.target_sync_every} ep.")
         logger.info(separator)
 
-        best_ckpt   = self.checkpoint_dir / "best_agent.pt"
+        best_ckpt = self.checkpoint_dir / "best_agent.pt"
+        best_reward = float("-inf")
         if best_ckpt.exists():
-            best_reward = self.agent.load(best_ckpt)
-            logger.info(
-                f"  Checkpoint previo detectado — best_reward={best_reward:.2f}. "
-                "Solo se sobreescribirá si se supera."
-            )
-        else:
-            best_reward = float("-inf")
+            try:
+                best_reward = self.agent.load(best_ckpt)
+                logger.info(
+                    f"  Checkpoint previo detectado — best_reward={best_reward:.2f}. "
+                    "Solo se sobreescribirá si se supera."
+                )
+            except RuntimeError:
+                logger.warning(
+                    f"  Checkpoint en {best_ckpt} incompatible con la arquitectura "
+                    "actual — se ignora y se entrena desde cero."
+                )
+                best_reward = float("-inf")
         total_steps    = 0
 
         for ep in range(1, n_episodes + 1):
