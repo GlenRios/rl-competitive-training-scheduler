@@ -44,8 +44,8 @@ class DQNSelectorAdapter(ProblemSelector):
         -------
         int — índice del problema elegido.
         """
-        student_obs    = self.obs_builder.build_student_obs(state.student)
-        problem_matrix = self.obs_builder.build_problem_matrix(state.student)
+        student_obs    = self.obs_builder.student_obs(state.student)
+        problem_matrix = self.obs_builder.problem_matrix(state.student)
 
         action = self.agent.select_action(
             student_obs    = student_obs,
