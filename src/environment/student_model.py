@@ -130,14 +130,21 @@ class StudentModel:
         self._rng                  = random.Random(random_seed)
 
         # Inicializar topic_ratings
+        # Si se pasan ratings por tema, usarlos; si no, usar global_rating
+        # como base para todos los temas.
+        _base = float(global_rating) if global_rating is not None else default_topic_rating
         self._initial_topic_ratings: dict[str, float] = {}
         for topic in CANONICAL_TOPICS:
             val = float(topic_ratings[topic]) if topic_ratings and topic in topic_ratings \
-                  else default_topic_rating
+                  else _base
             self._initial_topic_ratings[topic] = max(_MIN_RATING, min(_MAX_RATING, val))
 
-        self._initial_global_rating = float(global_rating) if global_rating is not None \
-            else sum(self._initial_topic_ratings.values()) / N_TOPICS
+        # El global_rating inicial siempre se deriva del promedio de topic_ratings
+        # para garantizar consistencia. Si se pasan topic_ratings explícitos (p.ej.
+        # desde un perfil LLM), el global_rating del perfil puede no coincidir con
+        # ese promedio, lo que haría que _update_global_rating lo corrija en el primer
+        # intento y el suelo de sesión lo congele ahí.
+        self._initial_global_rating = sum(self._initial_topic_ratings.values()) / N_TOPICS
 
         # Estado de sesion
         self.topic_ratings         : dict[str, float] = {}
@@ -408,7 +415,13 @@ class StudentModel:
         return deltas
 
     def _update_global_rating(self) -> None:
-        """Promedio ponderado por intentos. Protege contra caidas > 50 pts."""
+        """Promedio ponderado por intentos sobre todos los temas.
+
+        Todos los temas participan con peso (intentos + 1), de modo que
+        los temas sin intentar tienen peso mínimo 1 y los temas practicados
+        pesan proporcionalmente más. Cuando un tema sube su ELO al resolver
+        un problema, eso se refleja en el rating global.
+        """
         total_w = 0.0
         w_sum   = 0.0
         for t in CANONICAL_TOPICS:
