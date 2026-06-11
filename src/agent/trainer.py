@@ -209,7 +209,7 @@ class DQNTrainer:
                 )
 
         # Checkpoint final
-        self.agent.save(self.checkpoint_dir / "final_agent.pt")
+        self.agent.save(self.checkpoint_dir / "final_agent.pt", best_reward=best_reward)
         logger.info(separator)
         logger.info(f"  Entrenamiento completo — mejor reward: {best_reward:.1f}")
         logger.info(separator)
