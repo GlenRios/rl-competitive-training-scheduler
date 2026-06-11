@@ -15,7 +15,7 @@ Algoritmo implementado
     - Experience replay con muestreo aleatorio uniforme
     - Red target sincronizada cada `target_sync_every` episodios
     - Gradient clipping (dentro de DQNAgent.update)
-    - Checkpoint automático del mejor agente
+    - Checkpoint automático del mejor agente (persiste entre sesiones)
 
 Loop por episodio
 -----------------
@@ -112,6 +112,9 @@ class DQNTrainer:
     def train(self, n_episodes: int) -> list[dict]:
         """Ejecuta el loop de entrenamiento completo.
 
+        Si ya existe un best_agent.pt en checkpoint_dir, carga su
+        best_reward para no sobreescribir un modelo mejor entre sesiones.
+
         Parameters
         ----------
         n_episodes : int — número de episodios a entrenar
@@ -132,6 +135,7 @@ class DQNTrainer:
         logger.info(f"  Target sync    : cada {self.target_sync_every} ep.")
         logger.info(separator)
 
+        # Cargar best_reward del checkpoint previo si existe
         best_ckpt = self.checkpoint_dir / "best_agent.pt"
         best_reward = float("-inf")
         if best_ckpt.exists():
@@ -147,7 +151,8 @@ class DQNTrainer:
                     "actual — se ignora y se entrena desde cero."
                 )
                 best_reward = float("-inf")
-        total_steps    = 0
+
+        total_steps = 0
 
         for ep in range(1, n_episodes + 1):
             epsilon = self._compute_epsilon(ep)
@@ -178,12 +183,15 @@ class DQNTrainer:
             }
             self._history.append(metrics)
 
-            # Guardar mejor checkpoint
+            # Guardar mejor checkpoint (solo si supera el mejor previo)
             if ep_reward > best_reward:
                 best_reward = ep_reward
-                self.agent.save(self.checkpoint_dir / "best_agent.pt", best_reward=best_reward)
+                self.agent.save(
+                    self.checkpoint_dir / "best_agent.pt",
+                    best_reward=best_reward,
+                )
 
-            # Pausa periodica para no sobrecalentar la maquina
+            # Pausa periódica para no sobrecalentar la máquina
             if self.rest_every > 0 and ep % self.rest_every == 0:
                 time.sleep(self.rest_seconds)
 
@@ -270,16 +278,10 @@ class DQNTrainer:
     # ------------------------------------------------------------------
 
     def _update(self, batch: list[Transition]) -> float:
-        """Prepara el batch y llama a agent.update().
-
-        Aquí se reconstruye next_full_input_matrix para cada transición
-        usando el ObservationBuilder, que tiene acceso a la lista de
-        problemas y al estado del siguiente estudiante.
-        """
+        """Prepara el batch y llama a agent.update()."""
         device = self.agent.device
-        N      = self.env.n_problems
 
-        state_inputs     = torch.tensor(
+        state_inputs = torch.tensor(
             np.stack([t.state_input for t in batch]),
             dtype=torch.float32
         ).to(device)
@@ -293,12 +295,10 @@ class DQNTrainer:
         ).to(device)
 
         next_masks = torch.tensor(
-            np.stack([t.next_mask for t in batch]),
+            np.stack([np.asarray(t.next_mask, dtype=bool) for t in batch]),
             dtype=torch.bool
         ).to(device)
 
-        # Reconstruir next_full_input_matrix para cada transición del batch
-        # Forma final: (B, N, FULL_OBS_DIM)
         next_full_inputs = self._build_next_full_inputs(batch)
         next_full_inputs = torch.tensor(
             next_full_inputs, dtype=torch.float32
@@ -320,66 +320,27 @@ class DQNTrainer:
     def _build_next_full_inputs(
         self, batch: list[Transition]
     ) -> np.ndarray:
-        """Reconstruye la matriz (B, N, 29) para los siguientes estados.
-
-        Para cada transición, necesitamos [next_student_obs | problem_obs_i]
-        para cada uno de los N problemas. Los problem_obs_i dependen del
-        estado del estudiante, por lo que hay que recalcularlos.
-
-        Returns
-        -------
-        np.ndarray shape (B, N, FULL_OBS_DIM)
-        """
-        B    = len(batch)
-        N    = self.obs_builder.n_problems
-        D    = self.obs_builder.session_budget_min
+        """Reconstruye la matriz (B, N, D) para los siguientes estados."""
+        B      = len(batch)
+        N      = self.obs_builder.n_problems
         result = np.zeros((B, N, self.agent.obs_dim), dtype=np.float32)
 
         for b_idx, transition in enumerate(batch):
-            # Reconstruir estado temporal del estudiante para obtener
-            # los problem obs con los valores correctos de gap y p_solve.
-            # Usamos el state_vector almacenado (next_student_obs).
-            # Como aproximación eficiente, usamos los problem features
-            # pre-calculados en info["problem_matrix"] que se guardaron
-            # indirectamente via obs_builder en el siguiente step.
-
-            # NOTA: Esta es una aproximación. Los problem_obs dependen
-            # de (student_rating, student_fatigue, time_spent) que
-            # están codificados en next_student_obs.
-            # Para la arquitectura actual (29 dims), recalcular exacto
-            # requeriría el StudentModel completo; usamos la info
-            # almacenada en next_student_obs como proxy.
-
-            s_obs = transition.next_student_obs   # (5,)
-            s_tiled = np.tile(s_obs, (N, 1))      # (N, 5)
-
-            # Usar problem_matrix del snapshot más reciente del obs_builder
-            # (calculado con el estado del estudiante en ese momento)
-            # Como proxy: usamos los features del problema sin dependencia
-            # del estado (rating_norm, gap basado en student obs, onehot)
-            p_mat = self._approx_problem_matrix(s_obs)  # (N, 24)
-
-            full = np.concatenate([s_tiled, p_mat], axis=1)  # (N, 29)
+            s_obs   = transition.next_student_obs   # (D_s,)
+            s_tiled = np.tile(s_obs, (N, 1))        # (N, D_s)
+            p_mat   = self._approx_problem_matrix(s_obs)   # (N, D_p)
+            full    = np.concatenate([s_tiled, p_mat], axis=1)  # (N, D)
             result[b_idx] = full
 
         return result
 
     def _approx_problem_matrix(self, student_obs: np.ndarray) -> np.ndarray:
-        """Aproxima problem_matrix desde student_obs sin StudentModel completo.
-
-        Usa los Problem objects del obs_builder para reconstruir los
-        features independientes del estado (rating_norm, onehot) y
-        aproxima gap_norm, p_solve y time_norm desde student_obs.
-
-        student_obs = [rating_norm, fatigue, time_used_norm, solve_rate, topics_norm]
-        """
-        from src.environment.observation_builder import STUDENT_OBS_DIM, PROBLEM_OBS_DIM
-        from src.environment.problem import _MIN_RATING, _MAX_RATING, N_TOPICS
+        """Aproxima problem_matrix desde student_obs sin StudentModel completo."""
+        from src.environment.problem import _MIN_RATING, _MAX_RATING
 
         _RATING_RANGE = _MAX_RATING - _MIN_RATING
         N             = self.obs_builder.n_problems
 
-        # Extraer info del student_obs
         student_rating_norm = float(student_obs[0])
         student_fatigue     = float(student_obs[1])
         student_rating      = int(student_rating_norm * _RATING_RANGE + _MIN_RATING)
@@ -388,12 +349,10 @@ class DQNTrainer:
 
         rows = []
         for problem in self.obs_builder.problems:
-            # Aproximar p_solve con la fórmula sigmoid simple
             import math
-            gap      = problem.rating - student_rating
-            x        = (student_rating - problem.rating) / 400.0 - 0.5 * student_fatigue
-            p_solve  = 1.0 / (1.0 + math.exp(-x))
-            p_solve  = max(0.0, min(1.0, p_solve))
+            x       = (student_rating - problem.rating) / 400.0 - 0.5 * student_fatigue
+            p_solve = 1.0 / (1.0 + math.exp(-x))
+            p_solve = max(0.0, min(1.0, p_solve))
 
             vec = problem.to_observation_vector(
                 student_rating     = student_rating,

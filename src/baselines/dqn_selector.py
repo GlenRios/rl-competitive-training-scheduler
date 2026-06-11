@@ -19,8 +19,8 @@ class DQNSelectorAdapter(ProblemSelector):
 
     Parameters
     ----------
-    agent       : DQNAgent        -- agente con pesos cargados
-    obs_builder : ObservationBuilder -- construye las observaciones del entorno
+    agent       : DQNAgent           — agente con pesos cargados
+    obs_builder : ObservationBuilder — construye las observaciones del entorno
     """
 
     def __init__(self, agent: DQNAgent, obs_builder: ObservationBuilder) -> None:
@@ -38,7 +38,7 @@ class DQNSelectorAdapter(ProblemSelector):
         Parameters
         ----------
         state          : SessionState
-        available_mask : np.ndarray (N,) bool
+        available_mask : np.ndarray o list[bool] shape (N,)
 
         Returns
         -------
@@ -47,11 +47,14 @@ class DQNSelectorAdapter(ProblemSelector):
         student_obs    = self.obs_builder.student_obs(state.student)
         problem_matrix = self.obs_builder.problem_matrix(state.student)
 
+        # np.asarray garantiza compatibilidad tanto si llega list como ndarray
+        action_mask = np.asarray(available_mask, dtype=bool)
+
         action = self.agent.select_action(
             student_obs    = student_obs,
             problem_matrix = problem_matrix,
-            mask           = available_mask,
-            epsilon        = 0.0,   # modo explotación pura (sin exploración)
+            action_mask    = action_mask,
+            epsilon        = 0.0,   # explotación pura en inferencia
         )
         return action
 

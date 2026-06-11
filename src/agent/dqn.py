@@ -181,15 +181,19 @@ class DQNAgent:
 
         Parameters
         ----------
-        student_obs    : np.ndarray shape (STUDENT_OBS_DIM,) = (5,)
-        problem_matrix : np.ndarray shape (N, PROBLEM_OBS_DIM) = (N, 24)
+        student_obs    : np.ndarray shape (STUDENT_OBS_DIM,)
+        problem_matrix : np.ndarray shape (N, PROBLEM_OBS_DIM)
         action_mask    : np.ndarray shape (N,) bool — True = acción válida
+                         También acepta list[bool]; se convierte automáticamente.
         epsilon        : float — probabilidad de exploración [0, 1]
 
         Returns
         -------
         int — índice del problema seleccionado
         """
+        # Garantizar np.ndarray para operaciones booleanas
+        action_mask = np.asarray(action_mask, dtype=bool)
+
         valid_indices = np.where(action_mask)[0]
         if len(valid_indices) == 0:
             raise ValueError("No hay acciones válidas disponibles.")
@@ -215,16 +219,16 @@ class DQNAgent:
 
         Parameters
         ----------
-        student_obs    : np.ndarray shape (5,)
-        problem_matrix : np.ndarray shape (N, 24)
+        student_obs    : np.ndarray shape (STUDENT_OBS_DIM,)
+        problem_matrix : np.ndarray shape (N, PROBLEM_OBS_DIM)
 
         Returns
         -------
         np.ndarray shape (N,) — Q(s, a_i) para i = 0…N-1
         """
         n = len(problem_matrix)
-        s_tiled    = np.tile(student_obs, (n, 1))                  # (N, 5)
-        full_input = np.concatenate([s_tiled, problem_matrix], axis=1)  # (N, 29)
+        s_tiled    = np.tile(student_obs, (n, 1))                        # (N, D_s)
+        full_input = np.concatenate([s_tiled, problem_matrix], axis=1)  # (N, D)
 
         tensor = torch.tensor(full_input, dtype=torch.float32).to(self.device)
 
@@ -256,30 +260,26 @@ class DQNAgent:
 
         Parameters
         ----------
-        state_inputs     : (B, 29) — input de la red para la acción tomada
-        actions          : (B,)    — índices de las acciones (no usados directamente,
-                                     ya están codificados en state_inputs)
-        rewards          : (B,)    — recompensas recibidas
-        next_full_inputs : (B, N, 29) — inputs completos del siguiente estado
-        next_masks       : (B, N)  — máscara de acciones válidas en s'
-        terminated       : (B,)    — True si el episodio terminó
+        state_inputs     : (B, D)      — input de la red para la acción tomada
+        actions          : (B,)        — índices de las acciones
+        rewards          : (B,)        — recompensas recibidas
+        next_full_inputs : (B, N, D)   — inputs completos del siguiente estado
+        next_masks       : (B, N)      — máscara de acciones válidas en s'
+        terminated       : (B,)        — True si el episodio terminó
 
         Returns
         -------
         float — loss del batch
         """
-        B = state_inputs.shape[0]
-
         # Q(s, a) con la red online
         q_current = self.online_net(state_inputs).squeeze(-1)   # (B,)
 
         # max Q_target(s', a') sobre acciones válidas
         with torch.no_grad():
-            # Reshape para pasar por la red: (B*N, 29)
             B, N, D = next_full_inputs.shape
-            flat_next = next_full_inputs.view(B * N, D)
+            flat_next   = next_full_inputs.view(B * N, D)
             q_next_flat = self.target_net(flat_next).squeeze(-1)   # (B*N,)
-            q_next = q_next_flat.view(B, N)                        # (B, N)
+            q_next      = q_next_flat.view(B, N)                   # (B, N)
 
             # Enmascarar acciones inválidas con -inf
             q_next[~next_masks] = float("-inf")
@@ -294,7 +294,6 @@ class DQNAgent:
 
         self.optimizer.zero_grad()
         loss.backward()
-        # Gradient clipping para estabilidad
         nn.utils.clip_grad_norm_(self.online_net.parameters(), max_norm=1.0)
         self.optimizer.step()
 
