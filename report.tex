@@ -1,0 +1,772 @@
+\documentclass[12pt, a4paper]{article}
+
+% ── Paquetes ────────────────────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish]{babel}
+\usepackage{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{setspace}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{float}
+
+\geometry{
+  top=2.5cm, bottom=2.5cm,
+  left=3cm,  right=2.5cm
+}
+
+\onehalfspacing
+
+% ── Estilo de código ────────────────────────────────────────────────────────
+\definecolor{codegray}{rgb}{0.95,0.95,0.95}
+\definecolor{codeblue}{rgb}{0.1,0.1,0.6}
+\lstset{
+  backgroundcolor=\color{codegray},
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{codeblue}\bfseries,
+  breaklines=true,
+  frame=single,
+  framesep=4pt,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  xleftmargin=1.5em,
+}
+
+% ── Encabezado ──────────────────────────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\small Inteligencia Artificial 2025--2026}
+\lhead{\small \textit{rl-competitive-training-scheduler}}
+\cfoot{\thepage}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=codeblue,
+  urlcolor=codeblue,
+}
+
+% ────────────────────────────────────────────────────────────────────────────
+\begin{document}
+
+% ── Portada ─────────────────────────────────────────────────────────────────
+\begin{titlepage}
+  \centering
+  \vspace*{2cm}
+  {\Large \textbf{Inteligencia Artificial} \par}
+  \vspace{0.3cm}
+  {\large Proyecto Final --- Curso 2025--2026 \par}
+  \vspace{2cm}
+  \rule{\textwidth}{1pt}\\[0.5em]
+  {\LARGE \textbf{rl-competitive-training-scheduler} \par}
+  \vspace{0.4cm}
+  {\large Construcción de rutas de aprendizaje mediante\\
+  Deep Q-Network con evaluación pedagógica por LLM \par}
+  \rule{\textwidth}{1pt}
+  \vspace{3cm}
+  {\large Glenda N. Rios Rodríguez \par}
+  \vspace{0.2cm}
+  {\normalsize Grupo: C312 \par}
+  \vspace{0.5cm}
+  \vfill
+  {\large \today \par}
+\end{titlepage}
+
+% ── Tabla de contenidos ─────────────────────────────────────────────────────
+\tableofcontents
+\newpage
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Descripción del Problema}
+% ════════════════════════════════════════════════════════════════════════════
+ 
+En la programación competitiva, la calidad del entrenamiento no depende solo de
+la cantidad de problemas resueltos, sino de \textit{qué} problemas se intentan y
+en \textit{qué orden}. Un estudiante con 120 minutos disponibles puede malgastar
+su sesión en problemas triviales, repetir temáticas ya dominadas, o enfrentar
+problemas demasiado difíciles que generan frustración sin aprendizaje real.
+ 
+El problema que aborda este proyecto es el siguiente:
+ 
+\begin{quote}
+\textit{Dado un conjunto de $N$ problemas de programación competitiva y un
+presupuesto de tiempo $T$ minutos, seleccionar y ordenar una subsecuencia de
+problemas que maximice el aprendizaje del estudiante, respetando las restricciones
+temporales y adaptándose al estado cognitivo actualizado después de cada intento.}
+\end{quote}
+ 
+Este problema presenta tres características que lo hacen especialmente difícil
+de resolver con métodos clásicos:
+ 
+\begin{itemize}
+  \item \textbf{Secuencialidad}: cada decisión modifica el estado del estudiante
+    (ELO por tema, fatiga, tiempo restante), lo que hace que las decisiones futuras
+    dependan de las actuales.
+  \item \textbf{Incertidumbre}: el resultado de cada intento (resuelto/fallido,
+    tiempo empleado) es estocástico y depende del estado interno del estudiante.
+  \item \textbf{Objetivos múltiples}: una buena sesión debe equilibrar tasa de
+    éxito, cobertura temática, progresión de dificultad y eficiencia temporal.
+\end{itemize}
+ 
+El proyecto enmarca este problema como un \textbf{Proceso de Decisión de Markov
+(MDP)} y lo resuelve con un agente de aprendizaje por refuerzo basado en
+Deep Q-Network (DQN), al que se añade un módulo de evaluación pedagógica mediante
+un modelo de lenguaje grande (LLM) local.
+ 
+% ════════════════════════════════════════════════════════════════════════════
+\section{Modelado Formal}
+% ════════════════════════════════════════════════════════════════════════════
+ 
+\subsection{Proceso de Decisión de Markov}
+ 
+El sistema se modela como un MDP finito por episodio con la tupla
+$\mathcal{M} = \langle \mathcal{S},\, \mathcal{A},\, \mathcal{T},\, \mathcal{R},\,
+\gamma \rangle$, donde:
+ 
+\paragraph{Espacio de estados $\mathcal{S}$.}
+El estado $s_t \in \mathbb{R}^{24}$ en el paso $t$ codifica el estado completo del
+estudiante:
+\[
+  s_t = \bigl[\,r_{\text{norm}},\; f_t,\; t_{\text{used,norm}},\; \text{sr}_t,\;
+        \text{ELO}_1^{\text{norm}},\, \ldots,\, \text{ELO}_{20}^{\text{norm}}\,\bigr]
+\]
+donde $r_{\text{norm}}$ es el rating global normalizado, $f_t \in [0,1]$ la
+fatiga acumulada, $t_{\text{used,norm}}$ el tiempo consumido relativo al
+presupuesto, $\text{sr}_t$ la tasa de éxito hasta el momento, y
+$\text{ELO}_k^{\text{norm}}$ el ELO normalizado para cada uno de los 20 temas
+canónicos.
+ 
+\paragraph{Espacio de acciones $\mathcal{A}$.}
+La acción $a_t \in \{0, 1, \ldots, N-1\}$ es el índice del problema a intentar
+en el paso $t$, sobre un pool fijo de $N = 500$ problemas. Las acciones
+inválidas (problemas ya intentados o cuyo tiempo estimado supera el tiempo
+restante) se enmascaran con $-\infty$ en el cómputo de Q-valores, garantizando
+que el agente solo seleccione acciones factibles.
+ 
+\paragraph{Función de transición $\mathcal{T}$.}
+La transición $\mathcal{T}(s_{t+1} \mid s_t, a_t)$ está definida implícitamente
+por el modelo del estudiante. La probabilidad de resolución del problema $p$
+dado el estado del estudiante sigue un modelo ELO logístico:
+\[
+  P_{\text{solve}}(p \mid s_t) = \sigma\!\left(\frac{r_{\text{eff}}(s_t) - r_p}{\theta}\right)
+\]
+donde $\sigma$ es la función sigmoide, $r_p$ es el rating del problema,
+$r_{\text{eff}}(s_t) = \min_k \,\text{ELO}_k$ sobre los temas del problema
+(hipótesis del eslabón más débil), y $\theta = 400$ es el parámetro de escala
+ELO estándar.
+ 
+Si el intento es exitoso, los ELO por tema se actualizan:
+\[
+  \Delta\,\text{ELO}_k = C_{\text{elo}} \cdot (1 - P_k) \cdot \text{challenge}_k
+  \cdot (1 - f_t),
+  \quad |\Delta\,\text{ELO}_k| \leq 30
+\]
+La fatiga se incrementa proporcionalmente al tiempo empleado, con
+$\lambda_{\text{fatigue}} = 1.2$.
+ 
+\paragraph{Función de recompensa $\mathcal{R}$.}
+La recompensa $r_t = \mathcal{R}(s_t, a_t, s_{t+1})$ tiene dos componentes:
+ 
+\textbf{Recompensa inmediata} por intento:
+\[
+  r_{\text{step}} =
+  \begin{cases}
+    r_{\text{éxito}} + \overline{\Delta\text{ELO}} + r_{\text{topic}} +
+    r_{\text{challenge}} + r_{\text{prog}} + r_{\text{stag}} +
+    r_{\text{overuse}} + r_{\text{div}} & \text{si resuelto} \\
+    r_{\text{fracaso}} & \text{si fallido}
+  \end{cases}
+\]
+ 
+donde los componentes se definen como sigue. Los valores por defecto se
+indican entre paréntesis.
+ 
+\textit{Componentes fijos:}
+\begin{itemize}
+  \item $r_{\text{éxito}} = +10$; \quad $r_{\text{fracaso}} = -2$.
+  \item $\overline{\Delta\text{ELO}}$: media de los incrementos de ELO sobre
+    los temas del problema (ver ec.\ de actualización de ELO).
+  \item $r_{\text{topic}} = +2$ si el problema cubre al menos un tema
+    canónico nuevo (no visto en la sesión); $0$ en caso contrario.
+\end{itemize}
+ 
+\textit{Bonificación por desafío} $r_{\text{challenge}}$
+(peso $w_c = 4.0$), en función del gap $g = r_p - r_{\text{global}}$:
+\[
+  r_{\text{challenge}} =
+  \begin{cases}
+    -4.0 & \text{si } g < -300 \quad \text{(trivial)} \\
+    -1.5 & \text{si } g > 600  \quad \text{(inalcanzable)} \\
+    w_c \cdot \dfrac{g}{200}
+      & \text{si } 0 \le g \le 200 \\
+    w_c \cdot \max\!\left(0,\; 1 - \dfrac{g - 200}{400}\right)
+      & \text{si } 200 < g \le 600 \\
+    w_c \cdot 0.2 \cdot \left(1 + \dfrac{g}{300}\right)
+      & \text{si } -300 \le g < 0
+  \end{cases}
+\]
+ 
+\textit{Bonificación por progresión} $r_{\text{prog}}$
+(peso $w_p = 5.0$), en función del incremento de dificultad respecto al
+problema anterior $\delta = r_p - r_{p-1}$:
+\[
+  r_{\text{prog}} =
+  \begin{cases}
+    0 & \text{si es el primer problema} \\
+    w_p & \text{si } \delta \ge 300 \\
+    w_p \cdot \dfrac{\delta}{300} & \text{si } 0 \le \delta < 300 \\
+    \max(-2,\; \delta / 300) & \text{si } \delta < 0
+  \end{cases}
+\]
+ 
+\textit{Penalización por estancamiento} $r_{\text{stag}} = -6.0$ si el
+problema actual y los últimos $W-1$ problemas ($W=3$) son todos triviales
+($r_{\text{global}} - r_p > 300$); $0$ en caso contrario.
+ 
+\textit{Penalización por sobreuso de tema} $r_{\text{overuse}}$: para cada
+tema $k$ del problema cuya frecuencia relativa $f_k = n_k / n_{\text{tot}}$
+supere el umbral $\tau = 0.30$:
+\[
+  r_{\text{overuse}} = \sum_{k:\, f_k > \tau}
+    (-10) \cdot \frac{f_k - \tau}{1 - \tau}
+\]
+ 
+\textit{Bonificación por diversidad} $r_{\text{div}}$: para cada tema $k$
+del problema con $f_k < \tau$ (poco practicado):
+\[
+  r_{\text{div}} = \frac{1}{|\text{tags}|}\sum_{k:\, f_k < \tau}
+    1.5 \cdot \frac{\tau - f_k}{\tau}
+\]
+Ambas penalizaciones/bonificaciones se activan solo a partir del tercer intento.
+ 
+\textbf{Recompensa terminal} al finalizar el episodio:
+\[
+  r_{\text{terminal}} = 10 \cdot \rho_s(\text{ratings}) + 2 \cdot |\mathcal{C}|
+  + 0.5 \cdot t_{\text{remaining}}
+\]
+donde $\rho_s$ es la correlación de Spearman entre el orden de intento y el
+rating de los problemas ($+1$ = perfecto fácil$\to$difícil, $-1$ = orden
+inverso), $|\mathcal{C}|$ es el número de temas algorítmicos canónicos
+distintos cubiertos, y $t_{\text{remaining}}$ es el tiempo restante de sesión
+en minutos.
+ 
+\paragraph{Factor de descuento $\gamma$.}
+Se usa $\gamma = 0.99$, que valora los refuerzos futuros casi tanto como
+los inmediatos, incentivando estrategias a largo plazo dentro del episodio.
+ 
+\subsection{Representación de la acción para la red Q}
+ 
+La red Q no recibe directamente el índice de acción, sino el vector concatenado:
+\[
+  \mathbf{x}_{t,i} = \bigl[\,s_t \;\|\; \mathbf{p}_i(s_t)\,\bigr] \in \mathbb{R}^{48}
+\]
+donde $\mathbf{p}_i(s_t) \in \mathbb{R}^{24}$ codifica el problema $i$ en
+relación con el estado actual del estudiante:
+\[
+  \mathbf{p}_i(s_t) = \bigl[\,r_{i,\text{norm}},\; \text{gap}_{\text{norm}},\;
+  P_{\text{solve}}(p_i \mid s_t),\; t_{i,\text{norm}},\;
+  \text{onehot}(\text{tags}_i)\,\bigr]
+\]
+El agente calcula $Q(s_t, a_i) = f_\theta(\mathbf{x}_{t,i})$ para todos los
+problemas disponibles y selecciona $a_t = \arg\max_i Q(s_t, a_i)$ sobre
+acciones válidas.
+
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Descripción del Dataset}
+% ════════════════════════════════════════════════════════════════════════════
+
+\subsection{Fuentes de datos}
+
+Se utilizan dos datasets públicos de Codeforces disponibles en Kaggle:
+
+\begin{table}[H]
+\centering
+\caption{Datasets utilizados}
+\begin{tabular}{llrp{6cm}}
+\toprule
+\textbf{Dataset} & \textbf{Fuente} & \textbf{Tamaño} & \textbf{Contenido} \\
+\midrule
+\texttt{codeforces\_dataset.csv} & Kaggle (immortal3) & 14 MB &
+  Contest ID, nombre del problema, enunciado, tags con rating embebido (\texttt{*XXXX}) \\
+\texttt{codeforces\_problemset.csv} & Kaggle (erchhh) & 20 MB &
+  Enunciado, ejemplos de entrada/salida, límite de tiempo, tags en formato lista Python \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Ambos datasets se combinan mediante un proceso de unión por \texttt{problem\_id}
+(construido como concatenación de contest ID y letra del problema, e.g.\ ``325A'').
+
+\subsection{Pipeline de preprocesamiento}
+
+El pipeline transforma los datos crudos en un conjunto de 500 problemas
+utilizables por el entorno de simulación:
+
+\begin{enumerate}
+  \item \textbf{Construcción de \texttt{problem\_id}}: concatenación de
+    \texttt{contest\_id} + letra del problema.
+  \item \textbf{Extracción de rating}: parseo del token \texttt{*XXXX} embebido
+    en la cadena de tags. Este token es la única fuente de dificultad
+    numérica en ambos datasets.
+  \item \textbf{Limpieza de tags}: eliminación de \texttt{*XXXX} de la lista
+    de tags; normalización a lista de strings en minúsculas.
+  \item \textbf{Filtrado}: descarte de filas sin rating o sin enunciado.
+  \item \textbf{Muestreo estratificado}: selección de 500 problemas
+    distribuidos por bandas de dificultad, con distribución sesgada hacia
+    ratings accesibles para reproducir la distribución real del uso del
+    sistema.
+\end{enumerate}
+
+\begin{table}[H]
+\centering
+\caption{Distribución por banda de dificultad en el dataset procesado}
+\begin{tabular}{lrr}
+\toprule
+\textbf{Rango de rating} & \textbf{Proporción} & \textbf{Problemas (N=500)} \\
+\midrule
+800 -- 1199 (Newbie)          & 25\% & 125 \\
+1200 -- 1599 (Pupil)          & 30\% & 150 \\
+1600 -- 1999 (Specialist)     & 25\% & 125 \\
+2000 -- 2399 (Expert)         & 12\% &  60 \\
+2400 -- 2799 (Candidate Master) & 5\% & 25 \\
+2800+ (Master / Grandmaster)   & 3\% & 15 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Perfiles de estudiante}
+
+El entorno requiere estudiantes simulados con distribuciones de habilidades
+realistas. Se generaron 500 perfiles mediante el LLM local (descrito en la
+Sección~\ref{sec:llm}), con ratings globales entre 800 y 2000 y distribuciones
+de ELO por tema correlacionadas según el arquetipo generado. Los perfiles se
+almacenan en \texttt{data/processed/student\_profiles.json} para garantizar
+reproducibilidad de los experimentos.
+
+Los perfiles cubren arquetipos como: especialista en matemáticas débil en grafos,
+especialista en DP, estudiante principiante, programador competitivo avanzado, etc.
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Diseño del Algoritmo}
+% ════════════════════════════════════════════════════════════════════════════
+
+\subsection{Deep Q-Network (DQN)}
+
+Se implementa el algoritmo DQN estándar~\cite{mnih2015} con las siguientes
+características:
+
+\paragraph{Arquitectura de la red Q.}
+Un perceptrón multicapa (MLP) con la siguiente topología:
+\[
+  \mathbb{R}^{48} \xrightarrow{\text{Linear}} \mathbb{R}^{128} \xrightarrow{\text{ReLU}}
+  \mathbb{R}^{64} \xrightarrow{\text{ReLU}} \mathbb{R}^{1}
+\]
+La salida es el Q-valor escalar para el par $(s_t, a_i)$. Se mantienen dos
+instancias con la misma arquitectura: la \textit{red online} (actualizada en
+cada paso) y la \textit{red target} (sincronizada periódicamente), lo que
+estabiliza el entrenamiento al desacoplar los targets de los parámetros
+entrenados.
+
+\paragraph{Política $\varepsilon$-greedy.}
+\[
+  a_t = \begin{cases}
+    \text{acción aleatoria válida} & \text{con probabilidad } \varepsilon \\
+    \arg\max_{i \text{ válido}} Q_\theta(s_t, a_i) & \text{en caso contrario}
+  \end{cases}
+\]
+$\varepsilon$ decae linealmente de 1.0 a 0.05 durante los primeros 80\% de los
+episodios de entrenamiento.
+
+\paragraph{Experience replay.}
+Se almacenan transiciones $(s_t, a_t, r_t, s_{t+1}, \text{mask}_{t+1}, \text{done})$
+en un buffer circular FIFO de capacidad 10,000. Cada paso de actualización
+muestrea aleatoriamente un batch de tamaño 64.
+
+Por eficiencia de memoria, la matriz de problemas
+$\mathbf{P}(s_{t+1}) \in \mathbb{R}^{500 \times 24}$ no se almacena en el buffer
+(supondría $\sim$240 MB a plena capacidad), sino que se reconstruye en el momento
+de entrenamiento desde \texttt{ObservationBuilder}.
+
+\paragraph{Actualización.}
+El objetivo de la ecuación de Bellman con red target es:
+\[
+  y_t = r_t + \gamma \cdot \max_{a' \text{ válido}} Q_{\theta^-}(s_{t+1}, a')
+  \cdot (1 - \text{done}_t)
+\]
+La pérdida es MSE: $\mathcal{L} = \mathbb{E}\left[(y_t - Q_\theta(s_t, a_t))^2\right]$,
+minimizada con Adam (lr $= 10^{-3}$). Se aplica gradient clipping con
+$\|\nabla\| \leq 1.0$ para mayor estabilidad.
+
+\subsection{Algoritmos de referencia (baselines)}
+
+Se implementaron dos baselines deterministas que comparten la interfaz
+abstracta \texttt{ProblemSelector}:
+
+\paragraph{Greedy.}
+En cada paso selecciona el problema disponible que maximiza la ratio:
+\[
+  \text{score}(p) = \frac{P_{\text{solve}}(p) \cdot \Delta\text{ELO}_{\text{esperado}}(p)}{t_{\text{estimado}}(p)}
+\]
+Es un heurístico adaptativo: reacciona a los cambios de ELO y fatiga tras cada
+intento.
+
+\paragraph{Knapsack 0/1.}
+Al inicio del episodio resuelve el problema de la mochila 0/1 con programación
+dinámica en $O(N \cdot W)$, donde $W$ es el presupuesto de tiempo discretizado
+en minutos. El valor de cada problema es:
+\[
+  V(p) = r_p + 50 \cdot |\{k \in \text{tags}(p) : k \notin \text{topics\_seen}\}|
+\]
+Una vez elegido el conjunto óptimo, los problemas se ejecutan en orden ascendente
+de dificultad. Es el único baseline \textit{no adaptativo}: toma todas las
+decisiones al inicio y no reacciona a resultados intermedios.
+
+(El algoritmo Rollout, explorado en experimentos preliminares, mostró un
+rendimiento muy inferior con recompensas medias negativas y un coste
+computacional inasumible, por lo que se descartó de la comparativa final.)
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Rol del LLM en el Sistema}
+\label{sec:llm}
+% ════════════════════════════════════════════════════════════════════════════
+
+El sistema integra un LLM local (\texttt{llama3.2:3b} vía Ollama) en dos
+roles funcionalmente distintos y complementarios.
+
+\subsection{Rol 1: Generación de perfiles de estudiante realistas}
+
+\textbf{Problema que resuelve.}
+Un perfil de estudiante generado aleatoriamente (con ELOs uniformes e
+independientes por tema) no es representativo de estudiantes reales, en
+los que las habilidades están fuertemente correlacionadas: un estudiante con ELO
+alto en DP tiende a tener ELO razonable en matemáticas, mientras que quien es
+fuerte en grafos generalmente domina también DFS y árboles.
+
+\textbf{Mecanismo.}
+Se consulta al LLM con un prompt que solicita un perfil de estudiante de
+programación competitiva con un arquetipo específico. El LLM responde en
+formato JSON estructurado con ELOs por tema que reflejan las correlaciones
+aprendidas de su preentrenamiento sobre datos de la comunidad competitiva:
+
+\begin{lstlisting}[language=Python, caption=Estructura del perfil generado por el LLM]
+{
+  "archetype": "Math specialist struggling with graphs",
+  "global_rating": 1350,
+  "session_budget_min": 120,
+  "topic_ratings": {
+    "math": 1800, "number theory": 1700,
+    "dp": 1200, "graphs": 900, ...
+  }
+}
+\end{lstlisting}
+
+Si Ollama no está disponible, el sistema cae en arquetipos predefinidos
+(\textit{fallback} determinista), garantizando que los experimentos sean
+reproducibles independientemente del LLM.
+
+\textbf{Impacto en el sistema.}
+Perfiles realistas producen condiciones de evaluación más representativas:
+el agente DQN y los baselines son evaluados sobre una distribución de
+estudiantes más cercana a la real, lo que da mayor validez externa a la
+comparación experimental.
+
+\subsection{Rol 2: Evaluación pedagógica de sesiones completadas}
+
+\textbf{Problema que resuelve.}
+Las métricas cuantitativas (recompensa total, Spearman, cobertura de temas)
+no capturan la calidad pedagógica de una secuencia desde una perspectiva
+didáctica. Dos sesiones con la misma recompensa pueden diferir
+significativamente en su valor educativo.
+
+\textbf{Mecanismo.}
+Tras completar una sesión, se construye un prompt que describe al LLM la
+secuencia completa de problemas intentados (ID, rating, tags, resultado,
+recompensa) y el estado final del estudiante. El LLM actúa como ``coach''
+experto y devuelve una evaluación estructurada en JSON:
+
+\begin{lstlisting}[caption=Estructura de la evaluación pedagógica del LLM]
+{
+  "score": 8,
+  "difficulty_progression": "good",
+  "topic_diversity": "average",
+  "challenge_level": "appropriate",
+  "explanation": "La sesion mostro una progresion ...",
+  "recommendation": "Incluir mas problemas de grafos ..."
+}
+\end{lstlisting}
+
+La puntuación (1--10) y las dimensiones cualitativas (\textit{difficulty
+progression}, \textit{topic diversity}, \textit{challenge level}) complementan
+las métricas numéricas con una interpretación en lenguaje natural, accesible
+para el usuario final.
+
+\textbf{Por qué el LLM es necesario aquí.}
+La evaluación pedagógica requiere razonamiento sobre conceptos abstractos
+(``¿esta secuencia es apropiada para este estudiante?'') que no pueden
+reducirse a una función escalar simple sin perder información semántica
+relevante. El LLM proporciona esta capacidad de evaluación cualitativa de
+forma directa, sin necesidad de diseñar y validar una rúbrica manual.
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Metodología Experimental}
+% ════════════════════════════════════════════════════════════════════════════
+
+\subsection{Entrenamiento del agente DQN}
+
+El agente se entrenó durante 8{,}000 episodios sobre el pool de 500 problemas,
+con perfiles de estudiante rotados secuencialmente del conjunto de 500
+perfiles preprocesados (cada perfil se reutiliza 16 veces a lo largo del
+entrenamiento). Este número de episodios permite que $\varepsilon$ alcance
+su valor mínimo en las primeras 6{,}400 iteraciones, dejando las últimas
+1{,}600 en régimen casi puramente explotador. Parámetros de entrenamiento:
+
+\begin{table}[H]
+\centering
+\caption{Hiperparámetros de entrenamiento}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parámetro} & \textbf{Valor} \\
+\midrule
+Episodios de entrenamiento    & 8{,}000 \\
+$\varepsilon_{\text{start}}$  & 1.0 \\
+$\varepsilon_{\text{end}}$    & 0.05 \\
+Decaimiento de $\varepsilon$  & lineal, 80\% de episodios (6{,}400 ep.) \\
+Learning rate (Adam)          & $10^{-3}$ \\
+Batch size                    & 64 \\
+Capacidad del buffer          & 10{,}000 \\
+Sincronización de target      & cada 10 episodios \\
+$\gamma$                      & 0.99 \\
+Gradient clipping             & 1.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Protocolo de evaluación}
+
+Se realizaron experimentos con $n = 50$ episodios por algoritmo sobre la misma
+colección de 50 perfiles de estudiante, garantizando la comparabilidad de los
+resultados. Los algoritmos evaluados son DQN, Knapsack y Greedy. Las métricas
+registradas en cada episodio son:
+
+\begin{itemize}
+  \item \textbf{Recompensa total}: suma de recompensas inmediatas del episodio.
+  \item \textbf{Progresión de Spearman} ($\rho_s$): correlación de Spearman
+    entre el orden de intento y el rating del problema ($+1$ = perfecto
+    fácil$\to$difícil).
+  \item \textbf{Cobertura temática}: número de temas algorítmicos canónicos
+    distintos cubiertos.
+  \item \textbf{Tasa de éxito}: problemas resueltos / intentados.
+  \item \textbf{Tiempo usado minutos}: tiempo total consumido en la sesión.
+  \item \textbf{Mejora de rating}: ELO global final $-$ ELO global inicial.
+\end{itemize}
+
+La significancia estadística se evalúa con el test de Mann-Whitney U (no
+paramétrico, apropiado dada la distribución no normal de las métricas)
+con nivel de significancia $\alpha = 0.05$.
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Resultados y Análisis}
+% ════════════════════════════════════════════════════════════════════════════
+
+Los experimentos se realizaron con 50 perfiles de estudiante diferentes (50
+episodios) para cada uno de los tres selectores principales: DQN, Knapsack y
+Greedy. El algoritmo Rollout se descartó en esta fase final por su bajo
+rendimiento en experimentos preliminares. Las Tablas~\ref{tab:resumen}
+y~\ref{tab:comparativa} resumen las métricas obtenidas.
+
+\begin{table}[H]
+\centering
+\caption{Resultados agregados: DQN, Knapsack y Greedy (50 episodios cada uno)}
+\label{tab:resumen}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Selector} & \textbf{Recompensa} & \textbf{Spearman} & \textbf{Cobertura} &
+\textbf{Tasa éxito} & \textbf{Tiempo usado} & \textbf{Mejora rating} \\
+ & \textit{media (sd)} & \textit{media (sd)} & \textit{media (sd)} &
+ \textit{media (sd)} & \textit{media (sd)} & \textit{media (sd)} \\
+\midrule
+DQN      & \textbf{38.17} (21.99) & 0.422 (0.404) & \textbf{4.16} (1.98) & \textbf{0.568} (0.213) & 119.92 (28.05) & 48.99 (133.58) \\
+Knapsack & 31.89 (21.04) & \textbf{0.602} (0.324) & 3.10 (1.58) & 0.460 (0.188) & 119.39 (28.34) & \textbf{56.40} (134.80) \\
+Greedy   & 16.60 (19.94) & 0.065 (0.438) & 6.30 (1.74) & 0.435 (0.177) & 118.95 (28.27) & 35.59 (122.30) \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\subsection{Análisis de la recompensa total}
+
+El DQN obtiene la recompensa media más alta (38.17), superando al Knapsack
+(31.89) en 6.28 puntos y al Greedy (16.60) en más del doble. La diferencia
+entre DQN y Greedy es estadísticamente significativa (Mann-Whitney U,
+$p < 0.0001$). Aunque la diferencia entre DQN y Knapsack no alcanza el umbral
+de significancia convencional ($p = 0.172$), la ventaja numérica del DQN es
+consistente a lo largo de los 50 episodios.
+
+\subsection{Progresión de dificultad (Spearman)}
+
+El Knapsack mantiene la mejor progresión de dificultad (0.602), muy superior
+a la del DQN (0.422) y a la prácticamente nula del Greedy (0.065). Las
+diferencias son significativas: DQN vs. Knapsack ($p = 0.008$) y DQN vs.
+Greedy ($p < 0.0001$). El orden ascendente de dificultad del Knapsack es
+estructuralmente óptimo para esta métrica, pero no se traduce en una mejor
+recompensa total.
+
+\subsection{Cobertura temática}
+
+El Greedy cubre la mayor cantidad de temas distintos (6.30), seguido por el
+DQN (4.16) y finalmente el Knapsack (3.10). Sin embargo, la alta cobertura
+del Greedy viene acompañada de una progresión de dificultad deficiente y
+una recompensa total baja. El DQN equilibra cobertura y progresión, mientras
+que el Knapsack sacrifica cobertura para maximizar la progresión. Todas las
+diferencias son significativas ($p < 0.01$).
+
+\subsection{Tasa de éxito}
+
+El DQN presenta la mayor tasa de éxito (0.568), superando al Knapsack (0.460)
+y al Greedy (0.435). La diferencia entre DQN y Knapsack es significativa
+($p = 0.009$) y también entre DQN y Greedy ($p = 0.001$). Esto indica que el
+DQN aprende a seleccionar problemas que el estudiante virtual tiene una
+probabilidad realista de resolver, sin caer en la sobreexplotación de
+problemas triviales (como sucedía con el Rollout en experimentos previos).
+
+\subsection{Mejora de rating}
+
+El Knapsack obtiene la mayor mejora media de rating (56.40), seguido del DQN
+(48.99) y el Greedy (35.59). Las diferencias no son estadísticamente
+significativas debido a la alta varianza de esta métrica (desviación típica
+$\sim$130 puntos). La mejora de rating está fuertemente influenciada por el
+perfil inicial del estudiante y por la aleatoriedad del modelo de éxito/fracaso.
+
+\subsection{Análisis cualitativo por tipos de perfil}
+
+El DQN destaca especialmente en perfiles de estudiante asimétricos o con
+puntos débiles muy marcados. Por ejemplo, en el arquetipo
+``Math specialist struggling with graphs'' (episodio 2), el DQN alcanza una
+recompensa de 62.28 frente a 0.32 del Knapsack y 24.65 del Greedy. En
+``Advanced Data Structures and Algorithms Specialist'' (episodio 30), el DQN
+obtiene 82.87, superando ampliamente al Knapsack (50.17) y al Greedy (37.85).
+
+Por el contrario, en perfiles muy homogéneos o con todos los ELOs equilibrados,
+el Knapsack puede ser competitivo o ligeramente superior, pero la ventaja del
+DQN en escenarios realistas (habilidades no uniformes) respalda su elección
+como algoritmo principal para el sistema.
+
+\subsection{Síntesis de los resultados}
+
+Los experimentos con 50 episodios por algoritmo confirman que el DQN aprende
+una política que maximiza la recompensa total, combinando una tasa de éxito
+alta con una cobertura temática intermedia y una progresión de dificultad
+aceptable. El Knapsack es el baseline más competitivo, especialmente en
+progresión de dificultad, pero su naturaleza estática lo limita ante perfiles
+de estudiante heterogéneos. El Greedy, aunque cubre muchos temas, carece de
+progresión y obtiene la peor recompensa. Estos resultados validan el enfoque
+de aprendizaje por refuerzo profundo para el problema de selección óptima de
+problemas bajo restricciones de tiempo.
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Limitaciones y Posibles Mejoras}
+% ════════════════════════════════════════════════════════════════════════════
+
+\subsection{Limitaciones actuales}
+
+\paragraph{Modelo del estudiante simplificado.}
+El \texttt{StudentModel} es una aproximación probabilística, no un modelo
+validado empíricamente. Las constantes de fatiga, actualización de ELO y
+tiempo de resolución se calibraron manualmente. Un modelo entrenado con datos
+reales de Codeforces (tiempos de envío, historial de aceptaciones) produciría
+simulaciones más fieles.
+
+\paragraph{Ausencia de Double DQN y Prioritized Replay.}
+La implementación usa DQN estándar. Extensiones conocidas como Double DQN
+(reduce sobreestimación de Q-valores) y Prioritized Experience Replay
+(muestrea transiciones más informativas) podrían mejorar la convergencia
+y la calidad de la política aprendida.
+
+\paragraph{Pool de problemas fijo.}
+El pool de 500 problemas es estático. En un sistema real, el pool debería
+actualizarse periódicamente con nuevos problemas de Codeforces. La
+generalización del agente a problemas no vistos durante el entrenamiento
+no ha sido evaluada.
+
+\paragraph{Evaluación LLM sin validación humana.}
+Las puntuaciones pedagógicas del LLM no han sido comparadas con evaluaciones
+de instructores humanos. La validez del LLM como evaluador pedagógico es
+una hipótesis razonable pero no verificada en este trabajo.
+
+\paragraph{Varianza alta en rating improvement.}
+La desviación estándar de la mejora de rating ($\sim$110--130 puntos) es
+muy elevada en todos los algoritmos, lo que indica que esta métrica está
+fuertemente influenciada por el perfil inicial del estudiante y la
+aleatoriedad del modelo. Se necesitan más episodios o estratificación por
+rating inicial para obtener estimaciones más precisas.
+
+\subsection{Posibles mejoras}
+
+\begin{enumerate}
+  \item \textbf{Double DQN / Dueling DQN}: incorporar estas variantes para
+    reducir la sobreestimación de Q-valores y mejorar la estabilidad del
+    entrenamiento.
+  \item \textbf{Modelo del estudiante basado en datos reales}: entrenar los
+    parámetros del modelo con historiales de resolución reales de Codeforces.
+  \item \textbf{LLM como función de recompensa aumentada}: en lugar de
+    usar el LLM solo como evaluador \textit{post-hoc}, integrar su puntuación
+    pedagógica directamente en la función de recompensa durante el
+    entrenamiento (reward shaping).
+  \item \textbf{Pool dinámico de problemas}: conectar el sistema a la API
+    de Codeforces para actualizar el pool con problemas recientes.
+  \item \textbf{Generalización a otros jueces en línea}: extender el preprocesador
+    para soportar datasets de LeetCode o AtCoder.
+  \item \textbf{Validación con usuarios reales}: comparar las sesiones
+    recomendadas por el DQN con sesiones diseñadas por instructores expertos.
+\end{enumerate}
+
+% ════════════════════════════════════════════════════════════════════════════
+% Referencias
+% ════════════════════════════════════════════════════════════════════════════
+\begin{thebibliography}{9}
+
+\bibitem{mnih2015}
+V. Mnih et al.,
+``Human-level control through deep reinforcement learning,''
+\textit{Nature}, vol. 518, pp. 529--533, 2015.
+
+\bibitem{sutton2018}
+R. S. Sutton and A. G. Barto,
+\textit{Reinforcement Learning: An Introduction}, 2nd ed.
+MIT Press, 2018.
+
+\bibitem{elo1978}
+A. E. Elo,
+\textit{The Rating of Chessplayers, Past and Present}.
+Arco Publishing, 1978.
+
+\bibitem{gymnasium}
+M. Towers et al.,
+``Gymnasium,''
+\textit{arXiv:2407.17032}, 2024.
+
+\bibitem{ollama}
+Ollama,
+``Run large language models locally,''
+\url{https://ollama.com}, 2024.
+
+\bibitem{codeforces}
+Codeforces,
+``Competitive programming judge,''
+\url{https://codeforces.com}.
+
+\end{thebibliography}
+
+\end{document}
