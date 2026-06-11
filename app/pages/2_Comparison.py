@@ -64,7 +64,7 @@ def build_selectors(algorithms: list[str]) -> dict:
             agent       = st.session_state.get("agent")
             obs_builder = st.session_state.get("obs_builder")
             if agent:
-                from evaluate import DQNSelectorAdapter
+                from src.baselines.dqn_selector import DQNSelectorAdapter
                 selectors["dqn"] = DQNSelectorAdapter(agent, obs_builder)
             else:
                 st.warning("DQN no disponible -- omitido.")

@@ -87,7 +87,7 @@ def get_selector(config):
         if agent is None:
             st.error("DQN no cargado.")
             return None
-        from evaluate import DQNSelectorAdapter
+        from src.baselines.dqn_selector import DQNSelectorAdapter
         return DQNSelectorAdapter(agent, obs_builder)
     return None
 
